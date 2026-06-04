@@ -42,6 +42,7 @@ async def generate_reply(source_content: str, user_id: str) -> str:
     """
     Uses GPT-4o to draft a contextual, humanized reply to the incoming message.
     """
+    print("OPENAI KEY LOADED:", bool(OPENAI_API_KEY))
     if not client:
         return "I'm currently unable to process your request due to missing AI configuration."
 

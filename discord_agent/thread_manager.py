@@ -59,7 +59,7 @@ async def create_control_thread(client: discord.Client, message: discord.Message
         f"{attachments_str}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"**Status:** ✅ MESSAGE FETCHED\n"
-        f"*Reply feature temporarily disabled.*"
+        # f"*Reply feature temporarily disabled.*"
     )
 
     try:
@@ -74,49 +74,134 @@ async def create_control_thread(client: discord.Client, message: discord.Message
 
         # Register in state manager
         state.register_thread(thread.id, message.channel, message, message.author)
+        # Generate AI draft
+        ai_draft = await generate_reply(
+            message.content,
+            str(message.author.id)
+        )
+
+        await thread.send(
+            f"🤖 **AI Draft Reply:**\n\n{ai_draft}"
+        )
+
+        # Start auto reply timer
+        task = asyncio.create_task(
+            auto_reply_countdown(
+                thread,
+                thread.id,
+                message.channel,
+                ai_draft
+            )
+        )
+
+        state.register_auto_reply(thread.id, task)
 
         logger.info(f"Created control thread '{thread_name}' (ID: {thread.id})")
 
     except Exception as e:
         logger.error(f"Error creating control thread: {e}")
 
-async def append_to_control_thread(client: discord.Client, message: discord.Message, thread_id: int):
-    """Appends a follow-up message to an existing control thread and restarts the AI drafting process."""
+async def append_to_control_thread(
+    client: discord.Client,
+    message: discord.Message,
+    thread_id: int
+):
+    """
+    Appends a follow-up message to an existing control thread,
+    generates a fresh AI draft, and restarts the auto-reply timer.
+    """
     try:
         control_guild = client.get_guild(CONTROL_SERVER_ID)
+
         if not control_guild:
             logger.error("append_to_control_thread: control_guild not found")
             return
 
         thread = client.get_channel(thread_id)
+
         if not thread:
-            logger.warning(f"append_to_control_thread: thread {thread_id} not found in cache, creating new thread.")
-            # If thread is missing/deleted, fall back to creating a new one
+            logger.warning(
+                f"append_to_control_thread: thread {thread_id} not found. "
+                f"Creating a new thread."
+            )
             await create_control_thread(client, message)
             return
 
-        # Cancel old auto-reply
+        thread_state = state.get_state(thread_id)
+
+        if not thread_state:
+            logger.error(
+                f"append_to_control_thread: no state found for thread {thread_id}"
+            )
+            return
+
+        # Cancel OLD timer first
         state.cancel_auto_reply(thread_id)
 
-        # Mark as unresolved again so the new AI draft can send
-        thread_state = state.get_state(thread_id)
-        if thread_state:
-            thread_state["resolved"] = False
+        # Mark unresolved again
+        thread_state["resolved"] = False
 
-        # Post the new message to the thread
+        # Generate message link
+        if message.guild:
+            message_link = (
+                f"https://discord.com/channels/"
+                f"{message.guild.id}/"
+                f"{message.channel.id}/"
+                f"{message.id}"
+            )
+        else:
+            message_link = (
+                f"https://discord.com/channels/@me/"
+                f"{message.channel.id}/"
+                f"{message.id}"
+            )
+
         attachments_str = extract_attachments(message)
 
-        # Generate Message Link
-        if message.guild:
-            message_link = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
-        else:
-            message_link = f"https://discord.com/channels/@me/{message.channel.id}/{message.id}"
+        # Post follow-up first
+        await thread.send(
+            f"**Follow-up from {message.author.name}:**\n"
+            f"> {message.content}\n"
+            f"**Link:** <{message_link}>\n"
+            f"{attachments_str}"
+        )
 
-        await thread.send(f"**Follow-up from {message.author.name}:**\n> {message.content}\n**Link:** <{message_link}>\n{attachments_str}")
+        logger.info(
+            f"Generating follow-up AI draft for: {message.content}"
+        )
+
+        # Generate fresh AI draft
+        ai_draft = await generate_reply(
+
+            message.content,str(message.author.id)
+        )
+
+        # Post AI draft
+        await thread.send(
+            f"🤖 **AI Draft Reply:**\n\n{ai_draft}"
+        )
+
+        # Start NEW timer
+        task = asyncio.create_task(
+            auto_reply_countdown(
+                thread,
+                thread_id,
+                thread_state["source_channel"],
+                ai_draft
+            )
+        )
+
+        state.set_auto_reply_task(thread_id, task)
+
+        logger.info(
+            f"Restarted auto-reply timer for thread {thread_id}"
+        )
 
     except Exception as e:
-        logger.error(f"Critical error in append_to_control_thread: {e}", exc_info=True)
-
+        logger.error(
+            f"Critical error in append_to_control_thread: {e}",
+            exc_info=True
+        )
 async def auto_reply_countdown(thread: discord.Thread, thread_id: int, source_channel, ai_draft: str):
     """
     Waits 30 seconds. If the thread is not resolved by a human, sends the AI draft.

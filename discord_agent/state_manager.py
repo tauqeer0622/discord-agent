@@ -18,6 +18,10 @@ class StateManager:
         }
         logger.debug(f"Registered thread {thread_id} for channel {source_channel.id}")
 
+    def register_auto_reply(self, thread_id: int, task):
+        if thread_id in self.pending_replies:
+            self.pending_replies[thread_id]["auto_reply_task"] = task
+
     def get_state(self, thread_id: int):
         """Returns the state dictionary for a given thread, or None."""
         return self.pending_replies.get(thread_id)

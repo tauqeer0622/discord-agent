@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from database import get_messages
 from datetime import datetime, timezone
 
 import discord
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "ai_memory.json")
 DASHBOARD_FILE = os.path.join(os.path.dirname(__file__), "dashboard.html")
+MESSAGES_FILE = os.path.join(
+    os.path.dirname(__file__),
+    "messages.html"
+)
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -55,6 +60,7 @@ class CommandCenterClient(discord.Client):
             web.patch("/api/configs/{channel_id}/toggle", self.handle_toggle_config),
             # CORS pre-flight (catch-all)
             web.options("/{path_info:.*}",                self.handle_options_generic),
+            web.get("/messages", self.handle_messages_page),
         ])
         runner = web.AppRunner(app)
         await runner.setup()
@@ -94,8 +100,25 @@ class CommandCenterClient(discord.Client):
         return web.json_response(data, headers=CORS_HEADERS)
 
     async def handle_get_messages(self, request):
-        """Return all tracked messages from the state manager."""
-        return web.json_response(state.get_messages_data(), headers=CORS_HEADERS)
+
+        rows = get_messages()
+
+        data = []
+
+        for row in rows:
+            data.append({
+                "id": row[0],
+                "author": row[1],
+                "content": row[2],
+                "channel": row[3],
+                "guild": row[4],
+                "timestamp": row[5],
+            })
+
+        return web.json_response(
+            data,
+            headers=CORS_HEADERS
+        )
 
     async def handle_get_configs(self, request):
         """Return all configured target channels from config_manager."""
@@ -160,7 +183,7 @@ class CommandCenterClient(discord.Client):
         """Return all guilds by calling Discord API directly (not just cache)."""
         try:
             guilds = []
-            async for g in self.fetch_guilds(limit=None):
+            async for g in self.fetch_guilds(with_counts=True):
                 guilds.append({
                     "id":           str(g.id),
                     "name":         g.name,
@@ -247,6 +270,26 @@ class CommandCenterClient(discord.Client):
 
     async def on_message(self, message: discord.Message):
         await process_message(self, message)
+
+    async def handle_messages_page(self, request):
+        try:
+            with open(
+                    MESSAGES_FILE,
+                    "r",
+                    encoding="utf-8"
+            ) as f:
+                content = f.read()
+
+            return web.Response(
+                text=content,
+                content_type="text/html"
+            )
+
+        except Exception as e:
+            return web.Response(
+                text=str(e),
+                status=500
+            )
 
 
 # ── Entry Point ────────────────────────────────────────────────

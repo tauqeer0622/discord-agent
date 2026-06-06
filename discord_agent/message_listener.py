@@ -10,6 +10,8 @@ from state_manager import state
 from priority_engine import is_target_question
 from database import save_message
 from ai_engine import generate_reply
+from typing_simulator import simulate_typing_and_send
+from ai_engine import add_to_context
 
 logger = logging.getLogger(__name__)
 
@@ -46,25 +48,32 @@ async def process_message(
     Main routing logic for all incoming messages.
     """
 
-    logger.info(
-        f"Incoming message from {message.author}: "
-        f"{message.content} "
-        f"(Channel: {message.channel.id})"
-    )
-
     # Ignore bot messages
     if message.author.bot:
         return
 
-    # Handle Control Server messages
+    is_dm = message.guild is None
+
+    # --------------------------------------------------
+    # HANDLE CONTROL SERVER THREADS FIRST
+    # --------------------------------------------------
     if (
         message.guild
         and message.guild.id == CONTROL_SERVER_ID
     ):
+
         if (
             isinstance(message.channel, discord.Thread)
             and state.get_state(message.channel.id)
         ):
+
+            thread_id = message.channel.id
+            thread_state = state.get_state(thread_id)
+
+            if not thread_state:
+                return
+
+            # Ignore bot status messages
             if message.author.id == client.user.id:
 
                 bot_prefixes = (
@@ -76,26 +85,83 @@ async def process_message(
                     "Incoming message",
                     "━━━━━━━━━━━━━━━━━━━━━━",
                     "⏳",
-                    "**Follow-up"
+                    "**Follow-up",
                 )
 
                 if message.content.startswith(bot_prefixes):
                     return
 
+            logger.info(
+                f"Operator action received for thread {thread_id}: "
+                f"{message.content}"
+            )
+
+            # Stop timer
+            state.cancel_auto_reply(thread_id)
+
+            # Mark resolved
+            state.mark_resolved(thread_id)
+
+            # Cancel workflow
+            if message.content.strip().lower() == "cancel":
+                state.cancel_auto_reply(thread_id)
+
+                state.mark_resolved(thread_id)
+
                 logger.info(
-                    "Operator reply detected in Control Thread "
-                    "(manual replies currently disabled)"
+                    f"Thread {thread_id} cancelled by operator."
                 )
 
-                # await handle_manual_reply(message)
+                return
 
-        return
+            # Human override workflow
+            await simulate_typing_and_send(
+                thread_state["source_channel"],
+                message.content
+            )
 
-    # Ignore own messages
+            if thread_state.get("source_author"):
+                add_to_context(
+                    str(thread_state["source_author"].id),
+                    "assistant",
+                    message.content
+                )
+
+            await message.channel.send(
+                "🚀 Operator reply sent successfully!"
+            )
+
+            logger.info(
+                f"Operator override sent for thread {thread_id}"
+            )
+
+            return
+
+    # --------------------------------------------------
+    # IGNORE OWN MESSAGES
+    # --------------------------------------------------
     if message.author.id == client.user.id:
         return
 
-    # Save EVERY incoming user message to DB
+    # --------------------------------------------------
+    # IGNORE UNMONITORED CHANNELS
+    # --------------------------------------------------
+    if (
+        not is_dm
+        and message.channel.id
+        not in config_manager.get_active_channel_ids()
+    ):
+        return
+
+    logger.info(
+        f"Incoming message from {message.author}: "
+        f"{message.content} "
+        f"(Channel: {message.channel.id})"
+    )
+
+    # --------------------------------------------------
+    # SAVE MESSAGE
+    # --------------------------------------------------
     save_message(
         author=message.author.name,
         content=message.content,
@@ -112,12 +178,15 @@ async def process_message(
         timestamp=message.created_at.isoformat()
     )
 
-    # Check for existing thread
+    # --------------------------------------------------
+    # FOLLOW-UP THREAD
+    # --------------------------------------------------
     active_thread_id = state.get_thread_for_user(
         message.author.id
     )
 
     if active_thread_id:
+
         logger.info(
             f"Routing follow-up message from "
             f"{message.author.name} "
@@ -132,21 +201,9 @@ async def process_message(
 
         return
 
-    # DM bypass
-    is_dm = message.guild is None
-
-    print("MESSAGE CHANNEL:", message.channel.id)
-    print("ACTIVE CHANNELS:", config_manager.get_active_channel_ids())
-
-    # Channel filter
-    if (
-        not is_dm
-        and message.channel.id
-        not in config_manager.get_active_channel_ids()
-    ):
-        return
-
-    # Question filter
+    # --------------------------------------------------
+    # QUESTION FILTER
+    # --------------------------------------------------
     if (
         not is_dm
         and not is_target_question(message.content)
@@ -164,6 +221,9 @@ async def process_message(
         f"{message.guild.name if message.guild else 'DM'}"
     )
 
+    # --------------------------------------------------
+    # CREATE CONTROL THREAD
+    # --------------------------------------------------
     await create_control_thread(
         client,
         message

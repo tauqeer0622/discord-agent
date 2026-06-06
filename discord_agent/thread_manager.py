@@ -81,7 +81,11 @@ async def create_control_thread(client: discord.Client, message: discord.Message
         )
 
         await thread.send(
-            f"🤖 **AI Draft Reply:**\n\n{ai_draft}"
+            f"🤖 **AI Draft Reply:**\n\n"
+            f"{ai_draft}\n\n"
+            f"⏳ This draft will be auto-sent in **60 seconds**.\n"
+            f"Type **cancel** to stop auto-posting.\n"
+            f"Or type your own reply to send it instead of the AI draft."
         )
 
         # Start auto reply timer
@@ -178,7 +182,11 @@ async def append_to_control_thread(
 
         # Post AI draft
         await thread.send(
-            f"🤖 **AI Draft Reply:**\n\n{ai_draft}"
+            f"🤖 **AI Draft Reply:**\n\n"
+            f"{ai_draft}\n\n"
+            f"⏳ This draft will be auto-sent in **60 seconds**.\n"
+            f"Type **cancel** to stop auto-posting.\n"
+            f"Or type your own reply to send it instead of the AI draft."
         )
 
         # Start NEW timer
@@ -202,31 +210,64 @@ async def append_to_control_thread(
             f"Critical error in append_to_control_thread: {e}",
             exc_info=True
         )
-async def auto_reply_countdown(thread: discord.Thread, thread_id: int, source_channel, ai_draft: str):
+async def auto_reply_countdown(
+    thread: discord.Thread,
+    thread_id: int,
+    source_channel,
+    ai_draft: str
+):
     """
-    Waits 30 seconds. If the thread is not resolved by a human, sends the AI draft.
+    Waits 60 seconds.
+    If operator does nothing, auto-send AI draft.
+    If operator intervenes, the task will be cancelled.
     """
+
     try:
-        await asyncio.sleep(30)
 
-        # Check if human intervened
-        if not state.is_resolved(thread_id):
-            logger.info(f"Auto-reply timeout reached for thread {thread_id}. Sending AI draft.")
-            state.mark_resolved(thread_id)
-            await thread.send("⏰ **Timeout reached. Auto-sending AI draft...**")
-            await simulate_typing_and_send(source_channel, ai_draft)
+        await asyncio.sleep(60)
 
-            # Retrieve author id to update context
-            thread_state = state.get_state(thread_id)
-            if thread_state and thread_state.get("source_author"):
-                add_to_context(str(thread_state["source_author"].id), "assistant", ai_draft)
+        if state.is_resolved(thread_id):
+            return
 
-            await thread.send("🚀 **Auto-reply sent successfully!**")
+        logger.info(
+            f"Auto-reply timeout reached for thread {thread_id}"
+        )
+
+        state.mark_resolved(thread_id)
+
+        await thread.send(
+            "⏰ **60 seconds elapsed. Auto-sending AI draft...**"
+        )
+
+        await simulate_typing_and_send(
+            source_channel,
+            ai_draft
+        )
+
+        thread_state = state.get_state(thread_id)
+
+        if (
+            thread_state
+            and thread_state.get("source_author")
+        ):
+            add_to_context(
+                str(thread_state["source_author"].id),
+                "assistant",
+                ai_draft
+            )
+
+        await thread.send(
+            "🚀 **AI draft sent successfully!**"
+        )
+
     except asyncio.CancelledError:
-        logger.info(f"Auto-reply countdown cancelled for thread {thread_id} (Human override).")
+
+        logger.info(
+            f"Auto-reply cancelled for thread {thread_id}"
+        )
+
     except Exception as e:
-        logger.error(f"Critical error in auto_reply_countdown for thread {thread_id}: {e}")
-        try:
-            await thread.send(f"❌ **Error during auto-reply:** {e}")
-        except:
-            pass
+
+        logger.error(
+            f"auto_reply_countdown error: {e}"
+        )

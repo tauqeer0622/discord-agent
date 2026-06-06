@@ -180,27 +180,45 @@ class CommandCenterClient(discord.Client):
             return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
 
     async def handle_get_guilds(self, request):
-        """Return all guilds by calling Discord API directly (not just cache)."""
+        """Return all guilds by calling Discord API directly."""
         try:
+
+            fetched_guilds = await self.fetch_guilds(with_counts=True)
+
             guilds = []
-            async for g in self.fetch_guilds(with_counts=True):
+
+            for g in fetched_guilds:
                 guilds.append({
-                    "id":           str(g.id),
-                    "name":         g.name,
+                    "id": str(g.id),
+                    "name": g.name,
                     "member_count": getattr(g, "member_count", None),
-                    "icon_url":     str(g.icon.url) if g.icon else None,
+                    "icon_url": str(g.icon.url) if g.icon else None,
                 })
-            return web.json_response(guilds, headers=CORS_HEADERS)
+
+            return web.json_response(
+                guilds,
+                headers=CORS_HEADERS
+            )
+
         except Exception as e:
+
             logger.error(f"fetch_guilds error: {e}")
+
             # Fallback to cached guilds
             guilds = [
-                {"id": str(g.id), "name": g.name,
-                 "member_count": g.member_count,
-                 "icon_url": str(g.icon.url) if g.icon else None}
+                {
+                    "id": str(g.id),
+                    "name": g.name,
+                    "member_count": getattr(g, "member_count", None),
+                    "icon_url": str(g.icon.url) if g.icon else None,
+                }
                 for g in self.guilds
             ]
-            return web.json_response(guilds, headers=CORS_HEADERS)
+
+            return web.json_response(
+                guilds,
+                headers=CORS_HEADERS
+            )
 
     async def handle_get_memory(self, request):
         """Return the AI conversation memory file."""

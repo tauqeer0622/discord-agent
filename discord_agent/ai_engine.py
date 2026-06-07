@@ -31,14 +31,22 @@ def save_memory():
 
 context_memory: Dict[str, List[dict]] = load_memory()
 
-def add_to_context(user_id: str, role: str, content: str):
-    """Adds a message to the user's context memory."""
-    if user_id not in context_memory:
-        context_memory[user_id] = []
-    context_memory[user_id].append({"role": role, "content": content})
+def add_to_context(memory_key: str, role: str, content: str):
+
+    if memory_key not in context_memory:
+        context_memory[memory_key] = []
+
+    context_memory[memory_key].append({
+        "role": role,
+        "content": content
+    })
+
     save_memory()
 
-async def generate_reply(source_content: str, user_id: str) -> str:
+async def generate_reply(
+    source_content: str,
+    memory_key: str
+) -> str:
     """
     Uses GPT-4o to draft a contextual, humanized reply to the incoming message.
     """
@@ -46,7 +54,7 @@ async def generate_reply(source_content: str, user_id: str) -> str:
     if not client:
         return "I'm currently unable to process your request due to missing AI configuration."
 
-    add_to_context(user_id, "user", source_content)
+    add_to_context(memory_key, "user", source_content)
 
     system_prompt = {
         "role": "system",
@@ -56,13 +64,19 @@ async def generate_reply(source_content: str, user_id: str) -> str:
             "Keep it short, use lowercase letters mostly, and talk like a normal person texting on Discord. "
             "NEVER say 'I am here to assist', 'I can help with that', or use formal robotic greetings. "
             "Do not over-punctuate; avoid exclamation marks to sound like a real human. "
-            "CRITICAL: You DO have conversational memory! The previous messages in this thread are the user's past interactions with you. "
-            "If the user asks if you remember what they said, you must accurately recall and reference their previous messages from this session. "
-            "Never say you cannot remember past interactions."
+            "CRITICAL: Use ONLY the conversation history provided in this thread.\n"
+            "Do NOT invent or assume previous conversations.\n"
+            "If the user asks what they said before, answer ONLY from the messages in this thread.\n"
+            "If there is no relevant previous message in the supplied history, say you don't see one in this conversation.\n"
+            "If the user asks What did I ask before?\n"
+            "answer using ONLY the previous USER messages from the current thread.\n"
+            "Do not include assistant replies.\n"
+            "Do not say there is no history if previous user messages exist.\n"
+            "Never fabricate memory."
         )
     }
 
-    messages = [system_prompt] + context_memory[user_id]
+    messages = [system_prompt] + context_memory[memory_key]
 
     try:
         response = await client.chat.completions.create(

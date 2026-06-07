@@ -122,7 +122,7 @@ async def process_message(
 
             if thread_state.get("source_author"):
                 add_to_context(
-                    str(thread_state["source_author"].id),
+                    str(thread_id),
                     "assistant",
                     message.content
                 )

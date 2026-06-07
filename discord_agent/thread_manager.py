@@ -77,7 +77,7 @@ async def create_control_thread(client: discord.Client, message: discord.Message
         # Generate AI draft
         ai_draft = await generate_reply(
             message.content,
-            str(message.author.id)
+            str(thread.id)
         )
 
         await thread.send(
@@ -177,7 +177,7 @@ async def append_to_control_thread(
         # Generate fresh AI draft
         ai_draft = await generate_reply(
 
-            message.content,str(message.author.id)
+            message.content,str(thread.id)
         )
 
         # Post AI draft
@@ -251,7 +251,7 @@ async def auto_reply_countdown(
             and thread_state.get("source_author")
         ):
             add_to_context(
-                str(thread_state["source_author"].id),
+                str(thread_id),
                 "assistant",
                 ai_draft
             )

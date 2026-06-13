@@ -12,6 +12,7 @@ from config import DISCORD_TOKEN
 from config_manager import config_manager
 from message_listener import process_message
 from state_manager import state
+from thread_manager import thread_cleanup_loop
 
 from database import initialize_database
 
@@ -38,6 +39,8 @@ class CommandCenterClient(discord.Client):
         super().__init__()
 
         self.web_server_started = False
+        self.web_runner = None
+        self.thread_cleanup_started = False
         self.start_time = datetime.now(timezone.utc)
 
     # ── Web Server ─────────────────────────────────────────────
@@ -64,9 +67,11 @@ class CommandCenterClient(discord.Client):
         ])
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", 8080)
+        self.web_runner = runner
+        port = int(os.getenv("PORT", "8080"))
+        site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        logger.info("Web API + Dashboard started on http://0.0.0.0:8080")
+        logger.info("Web API + Dashboard started on http://0.0.0.0:%s", port)
 
     # ── Route Handlers ─────────────────────────────────────────
 
@@ -113,6 +118,8 @@ class CommandCenterClient(discord.Client):
                 "channel": row[3],
                 "guild": row[4],
                 "timestamp": row[5],
+                "channel_id": str(row[6]) if row[6] is not None else None,
+                "guild_id": str(row[7]) if row[7] is not None else None,
             })
 
         return web.json_response(
@@ -266,9 +273,9 @@ class CommandCenterClient(discord.Client):
         logger.info(f"Logged in as {self.user.name}#{self.user.discriminator} (ID: {self.user.id})")
         logger.info("Command Center Prototype is active and monitoring...")
 
-        if not self.web_server_started:
-            self.loop.create_task(self.start_web_server())
-            self.web_server_started = True
+        if not self.thread_cleanup_started:
+            asyncio.create_task(thread_cleanup_loop(self))
+            self.thread_cleanup_started = True
 
         # Subscribe to all guilds that contain configured channels.
         # discord.py-self uses lazy loading for large guilds — without subscribing,
@@ -312,7 +319,7 @@ class CommandCenterClient(discord.Client):
 
 # ── Entry Point ────────────────────────────────────────────────
 
-def main():
+async def run_service():
     if not DISCORD_TOKEN:
         logger.error("Cannot start bot without DISCORD_TOKEN. Please check your .env file.")
         return
@@ -321,11 +328,25 @@ def main():
     client = CommandCenterClient()
 
     try:
-        client.run(DISCORD_TOKEN)
+        await client.start_web_server()
+        client.web_server_started = True
+        await client.start(DISCORD_TOKEN)
     except discord.errors.LoginFailure:
         logger.error("Improper token has been passed. Check your DISCORD_TOKEN.")
     except Exception as e:
         logger.error(f"Critical error: {e}")
+    finally:
+        if not client.is_closed():
+            await client.close()
+        if client.web_runner is not None:
+            await client.web_runner.cleanup()
+
+
+def main():
+    try:
+        asyncio.run(run_service())
+    except KeyboardInterrupt:
+        logger.info("Discord Command Center stopped.")
 
 
 if __name__ == "__main__":

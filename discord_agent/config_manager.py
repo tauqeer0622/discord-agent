@@ -1,152 +1,75 @@
 import logging
-from database import get_connection
+
+from pymongo.errors import DuplicateKeyError
+
+from database import get_collection
 
 logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
+    @property
+    def collection(self):
+        return get_collection("discord_channels")
 
     def get_all(self):
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT label, channel_id, guild_id, guild_name, active
-            FROM discord_channels
-        """)
-
-        rows = cursor.fetchall()
-        conn.close()
-
+        documents = self.collection.find({}).sort("label", 1)
         return [
             {
-                "label": row[0],
-                "channel_id": row[1],
-                "guild_id": row[2],
-                "guild_name": row[3],
-                "active": bool(row[4]),
+                "label": document["label"],
+                "channel_id": document["channel_id"],
+                "guild_id": document.get("guild_id"),
+                "guild_name": document.get("guild_name"),
+                "active": bool(document.get("active", True)),
             }
-            for row in rows
+            for document in documents
         ]
 
     def add(self, label, channel_id, guild_id=None, guild_name=None):
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT channel_id FROM discord_channels WHERE channel_id=?",
-            (channel_id,)
-        )
-
-        if cursor.fetchone():
-            conn.close()
+        try:
+            self.collection.insert_one(
+                {
+                    "label": label,
+                    "channel_id": int(channel_id),
+                    "guild_id": int(guild_id) if guild_id is not None else None,
+                    "guild_name": guild_name,
+                    "active": True,
+                }
+            )
+        except DuplicateKeyError:
             return False
 
-        cursor.execute("""
-            INSERT INTO discord_channels
-            (label, channel_id, guild_id, guild_name, active)
-            VALUES (?, ?, ?, ?, 1)
-        """, (
-            label,
-            int(channel_id),
-            guild_id,
-            guild_name
-        ))
-
-        conn.commit()
-        conn.close()
-
-        logger.info(f"Added channel {channel_id}")
-
+        logger.info("Added channel %s", channel_id)
         return True
 
     def remove(self, channel_id):
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "DELETE FROM discord_channels WHERE channel_id=?",
-            (int(channel_id),)
-        )
-
-        deleted = cursor.rowcount
-
-        conn.commit()
-        conn.close()
-
-        return deleted > 0
+        result = self.collection.delete_one({"channel_id": int(channel_id)})
+        return result.deleted_count > 0
 
     def toggle(self, channel_id):
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT active
-            FROM discord_channels
-            WHERE channel_id=?
-        """, (int(channel_id),))
-
-        row = cursor.fetchone()
-
-        if not row:
-            conn.close()
+        document = self.collection.find_one({"channel_id": int(channel_id)})
+        if not document:
             return None
 
-        new_value = 0 if row[0] else 1
-
-        cursor.execute("""
-            UPDATE discord_channels
-            SET active=?
-            WHERE channel_id=?
-        """, (
-            new_value,
-            int(channel_id)
-        ))
-
-        conn.commit()
-        conn.close()
-
-        return bool(new_value)
+        new_value = not bool(document.get("active", True))
+        self.collection.update_one(
+            {"channel_id": int(channel_id)},
+            {"$set": {"active": new_value}},
+        )
+        return new_value
 
     def get_active_channel_ids(self):
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT channel_id
-            FROM discord_channels
-            WHERE active=1
-        """)
-
-        rows = cursor.fetchall()
-
-        conn.close()
-
-        return [int(row[0]) for row in rows]
+        documents = self.collection.find(
+            {"active": True},
+            {"channel_id": 1},
+        )
+        return [int(document["channel_id"]) for document in documents]
 
     def active_count(self):
-        return len(self.get_active_channel_ids())
+        return self.collection.count_documents({"active": True})
 
     def inactive_count(self):
-
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT COUNT(*)
-            FROM discord_channels
-            WHERE active=0
-        """)
-
-        count = cursor.fetchone()[0]
-
-        conn.close()
-
-        return count
+        return self.collection.count_documents({"active": False})
 
 
 config_manager = ConfigManager()

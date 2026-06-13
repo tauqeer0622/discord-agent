@@ -14,6 +14,7 @@ class StateManager:
             "source_message": source_message,
             "source_author": source_author,
             "resolved": False,
+            "reply_slot": None,
             "auto_reply_task": None
         }
         logger.debug(f"Registered thread {thread_id} for channel {source_channel.id}")
@@ -26,11 +27,21 @@ class StateManager:
         """Returns the state dictionary for a given thread, or None."""
         return self.pending_replies.get(thread_id)
 
-    def get_thread_for_user(self, author_id: int):
+    def get_thread_for_user(self, author_id: int, channel_id: int = None):
         """Returns the thread ID for this user, if any exists."""
         for t_id in reversed(list(self.pending_replies.keys())):
-            if self.pending_replies[t_id]["source_author"].id == author_id:
+            pending = self.pending_replies[t_id]
+            source_channel = pending.get("source_channel")
+
+            if pending["source_author"].id != author_id:
+                continue
+
+            if channel_id is not None and getattr(source_channel, "id", None) != channel_id:
+                continue
+
+            if not pending.get("resolved", False):
                 return t_id
+
         return None
 
     def is_resolved(self, thread_id: int) -> bool:
@@ -60,6 +71,22 @@ class StateManager:
         state = self.get_state(thread_id)
         if state:
             state["auto_reply_task"] = task
+
+    def set_reply_slot(self, thread_id: int, slot):
+        """Stores a reserved reply slot for a pending reply."""
+        state = self.get_state(thread_id)
+        if state:
+            state["reply_slot"] = slot
+
+    def pop_reply_slot(self, thread_id: int):
+        """Returns and clears the reserved reply slot for a pending reply."""
+        state = self.get_state(thread_id)
+        if not state:
+            return None
+
+        slot = state.get("reply_slot")
+        state["reply_slot"] = None
+        return slot
 
     def cleanup_thread(self, thread_id: int):
         """Removes a thread from state tracking."""

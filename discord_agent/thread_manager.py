@@ -1,273 +1,238 @@
 import asyncio
 import logging
+
 import discord
-from config import CONTROL_SERVER_ID, CONTROL_CHANNEL_ID
+
+from config import CONTROL_CHANNEL_ID, CONTROL_SERVER_ID
+from config_manager import config_manager
+from database import (
+    delete_channel_thread,
+    get_channel_thread,
+    get_expired_channel_threads,
+    save_channel_thread,
+    touch_channel_thread,
+)
 from state_manager import state
-from utils import format_discord_timestamp, extract_attachments
-from priority_engine import evaluate_priority
-from ai_engine import generate_reply, add_to_context
-from typing_simulator import simulate_typing_and_send
+from utils import extract_attachments, format_discord_timestamp
 
 logger = logging.getLogger(__name__)
 
-async def create_control_thread(client: discord.Client, message: discord.Message):
-    """
-    Creates a thread in the Control Server for the incoming message
-    and posts the dashboard card.
-    """
-    # Fetch control guild and channel
+THREAD_INACTIVITY_DAYS = 7
+THREAD_CLEANUP_INTERVAL_SECONDS = 60 * 60
+
+
+async def _get_control_channel(client):
     control_guild = client.get_guild(CONTROL_SERVER_ID)
     if not control_guild:
-        logger.error(f"Could not find Control Server with ID {CONTROL_SERVER_ID}")
-        return
+        logger.error("Could not find Control Server with ID %s", CONTROL_SERVER_ID)
+        return None
 
     control_channel = control_guild.get_channel(CONTROL_CHANNEL_ID)
     if not control_channel or not isinstance(control_channel, discord.TextChannel):
-        logger.error(f"Could not find Control Channel with ID {CONTROL_CHANNEL_ID} or it is not a text channel")
-        return
+        logger.error(
+            "Could not find text Control Channel with ID %s",
+            CONTROL_CHANNEL_ID,
+        )
+        return None
 
-    # Determine thread name
-    source_name = f"{message.guild.name} - #{message.channel.name}" if message.guild else "Direct Message"
-    author_name = message.author.name
-    thread_name = f"{author_name} | {source_name}"[:100]  # Discord thread name limit is 100 chars
+    return control_channel
 
-    # Evaluate priority
-    priority_tag = evaluate_priority(message.content)
 
-    # Format the dashboard card
-    timestamp_str = format_discord_timestamp(message.created_at)
-    attachments_str = extract_attachments(message)
-
-    # Generate Message Link for source redirecting
-    if message.guild:
-        message_link = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
-    else:
-        message_link = f"https://discord.com/channels/@me/{message.channel.id}/{message.id}"
-
-    card_content = (
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"**NEW INCOMING MESSAGE**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"**Priority:** {priority_tag}\n"
-        f"**Source:** {source_name}\n"
-        f"**Link:** <{message_link}>\n"
-        f"**From:** {author_name} (`{message.author.id}`)\n"
-        f"**Time:** {timestamp_str}\n\n"
-        f"**Message:**\n"
-        f"> {message.content if message.content else '*[No text content]*'}\n\n"
-        f"**Attachments:**\n"
-        f"{attachments_str}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"**Status:** ✅ MESSAGE FETCHED\n"
-        # f"*Reply feature temporarily disabled.*"
-    )
+async def _get_thread(client, thread_id):
+    thread = client.get_channel(int(thread_id))
+    if thread:
+        return thread
 
     try:
-        # Send initial message to create thread from
-        thread_msg = await control_channel.send(f"Incoming message from **{author_name}** ({priority_tag})")
+        return await client.fetch_channel(int(thread_id))
+    except (discord.NotFound, discord.Forbidden):
+        return None
 
-        # Create thread
-        thread = await thread_msg.create_thread(name=thread_name, auto_archive_duration=1440)
 
-        # Post the card in the thread
-        await thread.send(card_content)
-
-        # Register in state manager
-        state.register_thread(thread.id, message.channel, message, message.author)
-        # Generate AI draft
-        ai_draft = await generate_reply(
-            message.content,
-            str(thread.id)
+async def _create_thread(starter, name):
+    try:
+        return await starter.create_thread(
+            name=name,
+            auto_archive_duration=10080,
+        )
+    except discord.HTTPException:
+        logger.warning(
+            "Seven-day auto-archive is unavailable; using one day. "
+            "The inactivity cleanup still uses seven days."
+        )
+        return await starter.create_thread(
+            name=name,
+            auto_archive_duration=1440,
         )
 
-        await thread.send(
-            f"🤖 **AI Draft Reply:**\n\n"
-            f"{ai_draft}\n\n"
-            f"⏳ This draft will be auto-sent in **60 seconds**.\n"
-            f"Type **cancel** to stop auto-posting.\n"
-            f"Or type your own reply to send it instead of the AI draft."
+
+def _message_link(message):
+    return (
+        f"https://discord.com/channels/{message.guild.id}/"
+        f"{message.channel.id}/{message.id}"
+    )
+
+
+def _message_card(message, heading):
+    content = message.content if message.content else "*[No text content]*"
+    return (
+        f"**{heading}**\n"
+        f"**Source:** {message.guild.name} - #{message.channel.name}\n"
+        f"**From:** {message.author.name} (`{message.author.id}`)\n"
+        f"**Time:** {format_discord_timestamp(message.created_at)}\n"
+        f"**Link:** <{_message_link(message)}>\n\n"
+        f"**Message:**\n> {content}\n\n"
+        f"**Attachments:**\n{extract_attachments(message)}"
+    )
+
+
+async def create_control_thread(client: discord.Client, message: discord.Message):
+    """Create one persistent control thread for the source channel."""
+    if message.guild is None:
+        return None
+
+    if message.channel.id not in config_manager.get_active_channel_ids():
+        return None
+
+    existing = get_channel_thread(message.channel.id)
+    if existing:
+        return await append_to_control_thread(client, message, existing[2])
+
+    control_channel = await _get_control_channel(client)
+    if not control_channel:
+        return None
+
+    source_name = f"{message.guild.name} - #{message.channel.name}"
+    starter = None
+    thread = None
+
+    try:
+        starter = await control_channel.send(
+            f"Monitored channel: **{source_name}**"
         )
+        thread = await _create_thread(starter, source_name[:100])
+        await thread.send(_message_card(message, "NEW MATCHING MESSAGE"))
 
-        # Start auto reply timer
-        task = asyncio.create_task(
-            auto_reply_countdown(
-                thread,
-                thread.id,
-                message.channel,
-                ai_draft
-            )
+        save_channel_thread(
+            channel_id=message.channel.id,
+            guild_id=message.guild.id,
+            thread_id=thread.id,
+            starter_message_id=starter.id,
+            last_activity=message.created_at.isoformat(),
         )
+        state.register_thread(
+            thread.id,
+            message.channel,
+            message,
+            message.author,
+        )
+        logger.info(
+            "Created control thread %s for source channel %s",
+            thread.id,
+            message.channel.id,
+        )
+        return thread.id
+    except Exception:
+        logger.exception("Error creating thread for channel %s", message.channel.id)
+        if thread:
+            try:
+                await thread.delete()
+            except Exception:
+                logger.warning("Could not remove partially created thread %s", thread.id)
+        if starter:
+            try:
+                await starter.delete()
+            except Exception:
+                logger.warning(
+                    "Could not remove partially created starter message %s",
+                    starter.id,
+                )
+        return None
 
-        state.register_auto_reply(thread.id, task)
-
-        logger.info(f"Created control thread '{thread_name}' (ID: {thread.id})")
-
-    except Exception as e:
-        logger.error(f"Error creating control thread: {e}")
 
 async def append_to_control_thread(
     client: discord.Client,
     message: discord.Message,
-    thread_id: int
-):
-    """
-    Appends a follow-up message to an existing control thread,
-    generates a fresh AI draft, and restarts the auto-reply timer.
-    """
-    try:
-        control_guild = client.get_guild(CONTROL_SERVER_ID)
-
-        if not control_guild:
-            logger.error("append_to_control_thread: control_guild not found")
-            return
-
-        thread = client.get_channel(thread_id)
-
-        if not thread:
-            logger.warning(
-                f"append_to_control_thread: thread {thread_id} not found. "
-                f"Creating a new thread."
-            )
-            await create_control_thread(client, message)
-            return
-
-        thread_state = state.get_state(thread_id)
-
-        if not thread_state:
-            logger.error(
-                f"append_to_control_thread: no state found for thread {thread_id}"
-            )
-            return
-
-        # Cancel OLD timer first
-        state.cancel_auto_reply(thread_id)
-
-        # Mark unresolved again
-        thread_state["resolved"] = False
-
-        # Generate message link
-        if message.guild:
-            message_link = (
-                f"https://discord.com/channels/"
-                f"{message.guild.id}/"
-                f"{message.channel.id}/"
-                f"{message.id}"
-            )
-        else:
-            message_link = (
-                f"https://discord.com/channels/@me/"
-                f"{message.channel.id}/"
-                f"{message.id}"
-            )
-
-        attachments_str = extract_attachments(message)
-
-        # Post follow-up first
-        await thread.send(
-            f"**Follow-up from {message.author.name}:**\n"
-            f"> {message.content}\n"
-            f"**Link:** <{message_link}>\n"
-            f"{attachments_str}"
-        )
-
-        logger.info(
-            f"Generating follow-up AI draft for: {message.content}"
-        )
-
-        # Generate fresh AI draft
-        ai_draft = await generate_reply(
-
-            message.content,str(thread.id)
-        )
-
-        # Post AI draft
-        await thread.send(
-            f"🤖 **AI Draft Reply:**\n\n"
-            f"{ai_draft}\n\n"
-            f"⏳ This draft will be auto-sent in **60 seconds**.\n"
-            f"Type **cancel** to stop auto-posting.\n"
-            f"Or type your own reply to send it instead of the AI draft."
-        )
-
-        # Start NEW timer
-        task = asyncio.create_task(
-            auto_reply_countdown(
-                thread,
-                thread_id,
-                thread_state["source_channel"],
-                ai_draft
-            )
-        )
-
-        state.set_auto_reply_task(thread_id, task)
-
-        logger.info(
-            f"Restarted auto-reply timer for thread {thread_id}"
-        )
-
-    except Exception as e:
-        logger.error(
-            f"Critical error in append_to_control_thread: {e}",
-            exc_info=True
-        )
-async def auto_reply_countdown(
-    thread: discord.Thread,
     thread_id: int,
-    source_channel,
-    ai_draft: str
 ):
-    """
-    Waits 60 seconds.
-    If operator does nothing, auto-send AI draft.
-    If operator intervenes, the task will be cancelled.
-    """
+    """Append a source-channel message to its existing control thread."""
+    thread = await _get_thread(client, thread_id)
+    if not thread:
+        delete_channel_thread(message.channel.id)
+        return await create_control_thread(client, message)
 
     try:
+        if getattr(thread, "archived", False):
+            await thread.edit(archived=False)
 
-        await asyncio.sleep(60)
-
-        if state.is_resolved(thread_id):
-            return
-
+        await thread.send(_message_card(message, "CHANNEL MESSAGE"))
+        touch_channel_thread(
+            message.channel.id,
+            message.created_at.isoformat(),
+        )
+        state.register_thread(
+            thread.id,
+            message.channel,
+            message,
+            message.author,
+        )
         logger.info(
-            f"Auto-reply timeout reached for thread {thread_id}"
+            "Routed source channel %s to control thread %s",
+            message.channel.id,
+            thread.id,
         )
+        return thread.id
+    except (discord.NotFound, discord.Forbidden):
+        delete_channel_thread(message.channel.id)
+        return await create_control_thread(client, message)
+    except Exception:
+        logger.exception("Could not append to control thread %s", thread_id)
+        return None
 
-        state.mark_resolved(thread_id)
 
-        await thread.send(
-            "⏰ **60 seconds elapsed. Auto-sending AI draft...**"
-        )
+async def cleanup_expired_threads(client: discord.Client):
+    """Delete threads whose source channels have been inactive for seven days."""
+    control_channel = await _get_control_channel(client)
 
-        await simulate_typing_and_send(
-            source_channel,
-            ai_draft
-        )
+    for mapping in get_expired_channel_threads(THREAD_INACTIVITY_DAYS):
+        channel_id, _, thread_id, starter_message_id, _ = mapping
+        thread = await _get_thread(client, thread_id)
 
-        thread_state = state.get_state(thread_id)
+        if thread:
+            try:
+                await thread.delete()
+            except discord.NotFound:
+                pass
+            except Exception:
+                logger.exception("Could not delete expired thread %s", thread_id)
+                continue
 
-        if (
-            thread_state
-            and thread_state.get("source_author")
-        ):
-            add_to_context(
-                str(thread_id),
-                "assistant",
-                ai_draft
-            )
+        if control_channel and starter_message_id:
+            try:
+                starter = await control_channel.fetch_message(starter_message_id)
+                await starter.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            except Exception:
+                logger.warning(
+                    "Could not delete starter message %s",
+                    starter_message_id,
+                )
 
-        await thread.send(
-            "🚀 **AI draft sent successfully!**"
-        )
-
-    except asyncio.CancelledError:
-
+        delete_channel_thread(channel_id)
+        state.cleanup_thread(thread_id)
         logger.info(
-            f"Auto-reply cancelled for thread {thread_id}"
+            "Deleted inactive thread %s for source channel %s",
+            thread_id,
+            channel_id,
         )
 
-    except Exception as e:
 
-        logger.error(
-            f"auto_reply_countdown error: {e}"
-        )
+async def thread_cleanup_loop(client: discord.Client):
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            await cleanup_expired_threads(client)
+        except Exception:
+            logger.exception("Thread cleanup cycle failed")
+        await asyncio.sleep(THREAD_CLEANUP_INTERVAL_SECONDS)

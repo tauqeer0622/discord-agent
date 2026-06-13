@@ -54,6 +54,7 @@ async def generate_reply(
     if not client:
         return "I'm currently unable to process your request due to missing AI configuration."
 
+    previous_context = list(context_memory.get(memory_key, []))
     add_to_context(memory_key, "user", source_content)
 
     system_prompt = {
@@ -72,11 +73,26 @@ async def generate_reply(
             "answer using ONLY the previous USER messages from the current thread.\n"
             "Do not include assistant replies.\n"
             "Do not say there is no history if previous user messages exist.\n"
+            "Use previous messages only as context.\n"
+            "Answer only the latest user message.\n"
+            "If previous messages are clearly related to the latest user message, use them as context.\n"
+            "If the latest user message changes topic, ignore unrelated previous messages.\n"
+            "Do not combine unrelated topics in the same reply.\n"
+            "Do not answer previous unanswered questions again.\n"
             "Never fabricate memory."
         )
     }
 
-    messages = [system_prompt] + context_memory[memory_key]
+    latest_message = {
+        "role": "user",
+        "content": (
+            "LATEST USER MESSAGE:\n"
+            f"{source_content}\n\n"
+            "Reply only to this latest message. Use earlier thread messages only if they are directly relevant."
+        )
+    }
+
+    messages = [system_prompt] + previous_context + [latest_message]
 
     try:
         response = await client.chat.completions.create(

@@ -17,7 +17,6 @@ logging.basicConfig(
 
 # Core Settings
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-print("TOKEN LENGTH:", len(DISCORD_TOKEN) if DISCORD_TOKEN else 0)
 if not DISCORD_TOKEN:
     logging.error("DISCORD_TOKEN is missing in environment variables.")
 
@@ -26,10 +25,6 @@ CONTROL_CHANNEL_ID = int(os.getenv("CONTROL_CHANNEL_ID", "0"))
 
 if not CONTROL_SERVER_ID or not CONTROL_CHANNEL_ID:
     logging.error("CONTROL_SERVER_ID or CONTROL_CHANNEL_ID is missing.")
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logging.warning("OPENAI_API_KEY is missing. AI features will fail.")
 
 # Target Channels (as per Admin Panel structure)
 TARGET_CHANNELS = [

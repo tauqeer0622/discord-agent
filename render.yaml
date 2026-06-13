@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: discord-command-center
+    runtime: python
+    plan: free
+    rootDir: discord_agent
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CONTROL_SERVER_ID
+        sync: false
+      - key: CONTROL_CHANNEL_ID
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: discord_command_center
+      - key: LOG_LEVEL
+        value: INFO

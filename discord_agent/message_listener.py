@@ -74,6 +74,13 @@ async def process_message(client: discord.Client, message: discord.Message):
     if message.channel.id not in active_channel_ids:
         return
 
+    if not is_target_question(message.content):
+        logger.debug(
+            "Ignored non-target message in channel %s",
+            message.channel.id,
+        )
+        return
+
     save_message(
         author=message.author.name,
         content=message.content,
@@ -87,13 +94,6 @@ async def process_message(client: discord.Client, message: discord.Message):
     mapping = get_channel_thread(message.channel.id)
     if mapping:
         await append_to_control_thread(client, message, mapping[2])
-        return
-
-    if not is_target_question(message.content):
-        logger.debug(
-            "Ignored non-target message in channel %s before thread creation",
-            message.channel.id,
-        )
         return
 
     await create_control_thread(client, message)

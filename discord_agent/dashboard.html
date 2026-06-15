@@ -106,9 +106,9 @@
     .pill{font-size:.7rem;font-weight:700;padding:2px 11px;border-radius:100px;background:rgba(124,58,237,.15);color:var(--purple-l);border:1px solid rgba(124,58,237,.22)}
 
     /* ── Messages table ──────────────────────────────────────────── */
-   .tbl-head,.tbl-row{
+.tbl-head,.tbl-row{
   display:grid;
-  grid-template-columns:70px 150px 180px 1fr 110px 100px 120px;
+  grid-template-columns:70px 150px 180px 1fr 1fr 120px;
   padding:.75rem 1.5rem;
   gap:1rem;
   align-items:center
@@ -132,6 +132,30 @@
   color:var(--text2);
   line-height:1.5;
 }
+
+.reply-content{
+  white-space:normal;
+  word-break:break-word;
+  color:var(--green-l);
+  line-height:1.5;
+}
+
+.reply-empty{
+  color:var(--amber-l);
+  font-size:.78rem;
+  font-weight:700;
+}
+
+.source-link{
+  display:inline-flex;
+  margin-top:7px;
+  color:var(--purple-l);
+  text-decoration:none;
+  font-size:.75rem;
+  font-weight:700;
+}
+
+.source-link:hover{text-decoration:underline;color:#c4b5fd}
 
 .search-box{
   width:280px;
@@ -193,6 +217,34 @@
     .form-select:focus,.form-input:focus{border-color:var(--purple);background:rgba(124,58,237,.07)}
     .form-select option{background:#1a1a2e;color:var(--text)}
     .form-select:disabled{opacity:.45;cursor:not-allowed}
+    .multi-select{position:relative}
+    .multi-trigger{
+      width:100%;min-height:42px;padding:10px 38px 10px 14px;border-radius:10px;
+      background:rgba(255,255,255,.05);border:1px solid var(--border);
+      color:var(--text);font-size:.85rem;font-family:'Inter',sans-serif;
+      text-align:left;cursor:pointer;transition:border-color .2s,background .2s;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    }
+    .multi-trigger::after{
+      content:'v';position:absolute;right:14px;top:50%;transform:translateY(-50%);
+      color:var(--text3);font-size:.75rem;
+    }
+    .multi-trigger:hover{border-color:var(--border-h)}
+    .multi-trigger:focus{outline:none;border-color:var(--purple);background:rgba(124,58,237,.07)}
+    .multi-trigger:disabled{opacity:.45;cursor:not-allowed}
+    .multi-menu{
+      display:none;position:absolute;z-index:30;left:0;right:0;top:calc(100% + 6px);
+      max-height:260px;overflow:auto;padding:6px;border-radius:10px;
+      background:#10131f;border:1px solid var(--border-h);
+      box-shadow:0 18px 40px rgba(0,0,0,.35);
+    }
+    .multi-select.open .multi-menu{display:block}
+    .multi-option{
+      display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;
+      color:var(--text2);font-size:.82rem;cursor:pointer;
+    }
+    .multi-option:hover{background:rgba(255,255,255,.055);color:var(--text)}
+    .multi-option input{accent-color:var(--purple);width:15px;height:15px;flex-shrink:0}
 
     .btn-add{
       width:100%;padding:11px;border-radius:10px;
@@ -336,9 +388,9 @@
     <div id="tabPanelOverview">
       <div class="stats">
         <div class="stat c-all"><div class="stat-ico">📨</div><div class="stat-val" id="sTotal">0</div><div class="stat-lbl">Total Messages</div></div>
-        <div class="stat c-urg"><div class="stat-ico">🔴</div><div class="stat-val" id="sUrgent">0</div><div class="stat-lbl">Urgent</div></div>
-        <div class="stat c-biz"><div class="stat-ico">💼</div><div class="stat-val" id="sBusiness">0</div><div class="stat-lbl">Business</div></div>
-        <div class="stat c-done"><div class="stat-ico">✅</div><div class="stat-val" id="sResolved">0</div><div class="stat-lbl">Resolved</div></div>
+        <div class="stat c-done"><div class="stat-ico">✅</div><div class="stat-val" id="sReplied">0</div><div class="stat-lbl">Replied</div></div>
+        <div class="stat c-urg"><div class="stat-ico">⏳</div><div class="stat-val" id="sNotReplied">0</div><div class="stat-lbl">Not Replied</div></div>
+        <div class="stat c-biz"><div class="stat-ico">📡</div><div class="stat-val" id="sActiveChannels">0</div><div class="stat-lbl">Active Channels</div></div>
       </div>
       <div class="grid">
         <!-- Messages panel -->
@@ -361,8 +413,7 @@
               <div class="tbl-hc">Author</div>
               <div class="tbl-hc">Source</div>
               <div class="tbl-hc">Message</div>
-              <div class="tbl-hc">Priority</div>
-              <div class="tbl-hc">Status</div>
+              <div class="tbl-hc">Reply</div>
               <div class="tbl-hc">Timestamp</div>
           </div>
           <div id="msgBody"><div class="empty"><div class="empty-ico">📭</div><div class="empty-txt">No messages intercepted yet.<br>Waiting for activity…</div></div></div>
@@ -403,10 +454,13 @@
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label" for="selChannel">Channel</label>
-              <select class="form-select" id="selChannel" disabled onchange="onChannelChange()">
-                <option value="">— Select a server first —</option>
-              </select>
+              <label class="form-label" for="channelPickerBtn">Channels</label>
+              <div class="multi-select" id="channelPicker">
+                <button class="multi-trigger" id="channelPickerBtn" type="button" disabled onclick="toggleChannelPicker()">
+                  Select a server first
+                </button>
+                <div class="multi-menu" id="channelMenu"></div>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label" for="inpLabel">Label</label>
@@ -444,7 +498,8 @@ let tab     = localStorage.getItem('ccTab')   || 'overview';
 let cache   = { status:{}, messages:[], configs:[], memory:{} };
 let guilds  = [];
 let selGuildId   = null;
-let selChannelId = null;
+let availableChannels = [];
+let selectedChannelIds = new Set();
 
 /* ── Utils ───────────────────────────────────────────────────── */
 const $  = id => document.getElementById(id);
@@ -459,25 +514,6 @@ function fmtUptime(sec){
 function fmtTime(iso){
   if(!iso) return '—';
   try{return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}catch{return '—'}
-}
-
-/* ── Priority (mirrors priority_engine.py) ───────────────────── */
-const URGENT_KW  =['help','urgent','asap','broken','issue','error','fix','critical'];
-const BUSINESS_KW=['collab','collaboration','sponsor','sponsorship','pricing','business','partnership'];
-function getPriority(c){
-  if(!c) return 'NORMAL';
-  const l=c.toLowerCase();
-  if(URGENT_KW.some(k=>l.includes(k)))   return 'URGENT';
-  if(BUSINESS_KW.some(k=>l.includes(k))) return 'BUSINESS';
-  return 'NORMAL';
-}
-function priorityBadge(p){
-  if(p==='URGENT')   return '<span class="badge b-urg">🔴 Urgent</span>';
-  if(p==='BUSINESS') return '<span class="badge b-biz">💼 Business</span>';
-  return '<span class="badge b-nor">⚪ Normal</span>';
-}
-function statusBadge(r){
-  return r?'<span class="badge b-res">✅ Resolved</span>':'<span class="badge b-pend">⏳ Pending</span>';
 }
 
 /* ── Mode Toggle ─────────────────────────────────────────────── */
@@ -516,11 +552,11 @@ function renderStatus(s){
 
 /* ── Stats ───────────────────────────────────────────────────── */
 function renderStats(msgs){
-  const urg=msgs.filter(m=>getPriority(m.content)==='URGENT').length;
-  const biz=msgs.filter(m=>getPriority(m.content)==='BUSINESS').length;
-  const done=msgs.filter(m=>m.resolved).length;
-  $('sTotal').textContent=msgs.length;$('sUrgent').textContent=urg;
-  $('sBusiness').textContent=biz;$('sResolved').textContent=done;
+  const replied=msgs.filter(m=>m.reply).length;
+  $('sTotal').textContent=msgs.length;
+  $('sReplied').textContent=replied;
+  $('sNotReplied').textContent=msgs.length-replied;
+  $('sActiveChannels').textContent=(cache.configs||[]).filter(c=>c.active!==false).length;
 }
 
 /* ── Messages table ──────────────────────────────────────────── */
@@ -554,9 +590,6 @@ function renderMessages(msgs){
   }
 
   $('msgBody').innerHTML = msgs.map((m,index)=>{
-
-      const p = getPriority(m.content);
-
       const av =
           (m.author || '?')
           .slice(0,2)
@@ -566,6 +599,13 @@ function renderMessages(msgs){
           m.guild
           ? `${esc(m.guild)} · #${esc(m.channel)}`
           : 'DM';
+
+      const replyHtml = m.reply
+          ? `<div class="reply-content" title="${esc(m.reply)}">${esc(m.reply)}</div>`
+          : '<span class="reply-empty">Not replied</span>';
+      const sourceHtml = m.source_url
+          ? `<a class="source-link" href="${esc(m.source_url)}" target="_blank" rel="noopener noreferrer">Go to source</a>`
+          : '';
 
       return `
       <div class="tbl-row ${index===0 ? 'newest' : ''}">
@@ -589,14 +629,11 @@ function renderMessages(msgs){
               title="${esc(m.content || '')}"
           >
               ${esc(m.content || '[No Content]')}
+              ${sourceHtml}
           </div>
 
           <div class="tbl-c">
-              ${priorityBadge(p)}
-          </div>
-
-          <div class="tbl-c">
-              ${statusBadge(m.resolved)}
+              ${replyHtml}
           </div>
 
           <div class="tbl-c ts">
@@ -687,38 +724,122 @@ async function loadGuilds(){
 /* ── Server dropdown changed ─────────────────────────────────── */
 async function onServerChange(){
   const guildId=$('selServer').value;
-  const chSel=$('selChannel');
-  selGuildId=guildId||null; selChannelId=null;
+  selGuildId=guildId||null;
+  availableChannels=[];
+  selectedChannelIds.clear();
   $('inpLabel').value='';
-  if(!guildId){chSel.innerHTML='<option value="">— Select a server first —</option>';chSel.disabled=true;return}
-  chSel.innerHTML='<option value="">Loading channels…</option>'; chSel.disabled=true;
+  setChannelPickerState('Select a server first', true);
+  $('channelMenu').innerHTML='';
+  if(!guildId) return;
+  setChannelPickerState('Loading channels...', true);
   try{
     const res=await fetch(`/api/channels?guild_id=${guildId}`);
     const channels=await res.json();
     if(!Array.isArray(channels)||!channels.length){
-      chSel.innerHTML='<option value="">No text channels found</option>';return;
+      setChannelPickerState('No text channels found', true);
+      return;
     }
-    chSel.innerHTML='<option value="">— Select a channel —</option>'+
-      channels.map(ch=>`<option value="${ch.channel_id}">#${esc(ch.channel_name)}</option>`).join('');
-    chSel.disabled=false;
-  }catch(e){chSel.innerHTML='<option value="">Error loading channels</option>';console.error(e)}
+    availableChannels=channels;
+    $('channelMenu').innerHTML=channels.map(ch=>`
+      <label class="multi-option">
+        <input type="checkbox" value="${ch.channel_id}" onchange="onChannelToggle(this)">
+        <span>#${esc(ch.channel_name)}</span>
+      </label>`).join('');
+    setChannelPickerState('Select channels', false);
+  }catch(e){
+    setChannelPickerState('Error loading channels', true);
+    console.error(e);
+  }
+}
+
+function setChannelPickerState(text, disabled){
+  const btn=$('channelPickerBtn');
+  btn.textContent=text;
+  btn.disabled=disabled;
+  $('channelPicker').classList.remove('open');
+}
+
+function toggleChannelPicker(){
+  if($('channelPickerBtn').disabled) return;
+  $('channelPicker').classList.toggle('open');
+}
+
+function updateChannelSummary(){
+  const count=selectedChannelIds.size;
+  if(!count){
+    $('channelPickerBtn').textContent='Select channels';
+    $('inpLabel').value='';
+    return;
+  }
+  if(count===1){
+    const channel=availableChannels.find(ch=>selectedChannelIds.has(String(ch.channel_id)));
+    $('channelPickerBtn').textContent=channel?`#${channel.channel_name}`:'1 channel selected';
+    const guild=guilds.find(g=>g.id===$('selServer').value);
+    const guildName=guild?guild.name:'Unknown Server';
+    $('inpLabel').value=channel?`${guildName} - #${channel.channel_name}`:'';
+    return;
+  }
+  $('channelPickerBtn').textContent=`${count} channels selected`;
+  $('inpLabel').value='';
+}
+
+function onChannelToggle(input){
+  const channelId=String(input.value);
+  if(input.checked) selectedChannelIds.add(channelId);
+  else selectedChannelIds.delete(channelId);
+  updateChannelSummary();
+}
+
+document.addEventListener('click',(e)=>{
+  const picker=$('channelPicker');
+  if(picker && !picker.contains(e.target)) picker.classList.remove('open');
+});
+
+function buildConfigPayload(channel, label, guildId, guildName, useCustomLabel){
+  const channelLabel=useCustomLabel && label
+    ? label
+    : `${guildName || 'Unknown Server'} - #${channel.channel_name}`;
+  return {
+    label: channelLabel,
+    channel_id: String(channel.channel_id),
+    guild_id: guildId ? String(guildId) : null,
+    guild_name: guildName
+  };
 }
 
 /* ── Channel dropdown changed ────────────────────────────────── */
 function onChannelChange(){
-  selChannelId=$('selChannel').value||null;
-  if(!selChannelId) return;
+  updateChannelSummary();
+}
+
+function resetChannelPicker(){
+  availableChannels=[];
+  selectedChannelIds.clear();
+  $('channelMenu').innerHTML='';
+  setChannelPickerState('Select a server first', true);
+}
+
+function getSelectedChannels(){
+  return availableChannels.filter(ch=>selectedChannelIds.has(String(ch.channel_id)));
+}
+
+function getSingleSelectedChannelName(){
+  const selected=getSelectedChannels();
+  return selected.length===1 ? selected[0].channel_name : '';
+}
+
+function syncSingleLabel(){
+  const channelName=getSingleSelectedChannelName();
+  if(!channelName) return;
   const guild=guilds.find(g=>g.id===$('selServer').value);
-  const channelOpt=$('selChannel').options[$('selChannel').selectedIndex];
-  const channelName=channelOpt.text.replace(/^#/,'');
   const guildName=guild?guild.name:'Unknown Server';
-  $('inpLabel').value=`${guildName} - ${channelName}`;
+  $('inpLabel').value=`${guildName} - #${channelName}`;
 }
 
 /* ── Add config ──────────────────────────────────────────────── */
 async function addConfig(){
   const label=$('inpLabel').value.trim();
-  const channelId = $('selChannel').value;
+  const selectedChannels=getSelectedChannels();
   const guildId = $('selServer').value;
   const guild=guilds.find(g=>g.id===$('selServer').value);
   const guildName=guild?guild.name:null;
@@ -726,24 +847,39 @@ async function addConfig(){
 
   msg.className='form-msg'; msg.textContent='';
 
-  if(!label||!channelId){
-    msg.className='form-msg err'; msg.textContent='Please select a server, channel, and provide a label.'; return;
+  if(!guildId||!selectedChannels.length){
+    msg.className='form-msg err'; msg.textContent='Please select a server and at least one channel.'; return;
+  }
+  if(selectedChannels.length===1&&!label){
+    syncSingleLabel();
   }
   $('btnAdd').disabled=true; $('btnAdd').textContent='Adding…';
   try{
-    const res=await fetch('/api/configs',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({label,channel_id:String(channelId),guild_id:guildId?String(guildId):null,guild_name:guildName})
-    });
-    const data=await res.json();
-    if(res.ok){
-      msg.className='form-msg ok'; msg.textContent='✅ Channel added successfully!';
-      $('selServer').value=''; $('selChannel').innerHTML='<option value="">— Select a server first —</option>';
-      $('selChannel').disabled=true; $('inpLabel').value='';
-      selGuildId=null; selChannelId=null;
+    let added=0;
+    let failed=[];
+    const useCustomLabel=selectedChannels.length===1;
+    for(const channel of selectedChannels){
+      const res=await fetch('/api/configs',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(buildConfigPayload(channel,$('inpLabel').value.trim(),guildId,guildName,useCustomLabel))
+      });
+      const data=await res.json();
+      if(res.ok) added++;
+      else failed.push(`#${channel.channel_name}: ${data.error||'Unknown error'}`);
+    }
+
+    if(added){
+      msg.className='form-msg ok';
+      msg.textContent=failed.length
+        ? `Added ${added}; ${failed.length} failed. ${failed.join(' | ')}`
+        : `Added ${added} channel${added!==1?'s':''} successfully!`;
+      $('selServer').value='';
+      resetChannelPicker();
+      $('inpLabel').value='';
+      selGuildId=null;
       await refresh();
     } else {
-      msg.className='form-msg err'; msg.textContent=`❌ ${data.error||'Unknown error'}`;
+      msg.className='form-msg err'; msg.textContent=failed.join(' | ')||'No channels were added.';
     }
   }catch(e){msg.className='form-msg err';msg.textContent='❌ Network error. Is the bot running?';}
   $('btnAdd').disabled=false; $('btnAdd').textContent='+ Add Configuration';

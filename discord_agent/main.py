@@ -121,6 +121,18 @@ class CommandCenterClient(discord.Client):
                 "timestamp": row[5],
                 "channel_id": str(row[6]) if row[6] is not None else None,
                 "guild_id": str(row[7]) if row[7] is not None else None,
+                "source_message_id": str(row[8]) if row[8] is not None else None,
+                "source_url": (
+                    f"https://discord.com/channels/{row[7]}/{row[6]}/{row[8]}"
+                    if row[6] is not None and row[7] is not None and row[8] is not None
+                    else (
+                        f"https://discord.com/channels/{row[7]}/{row[6]}"
+                        if row[6] is not None and row[7] is not None
+                        else None
+                    )
+                ),
+                "reply": row[9] or None,
+                "reply_timestamp": row[10] if len(row) > 10 else None,
             })
 
         return web.json_response(

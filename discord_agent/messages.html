@@ -192,8 +192,21 @@ body::before{
     margin-top:12px;
     display:flex;
     justify-content:space-between;
+    align-items:center;
+    gap:12px;
     color:#64748b;
     font-size:12px;
+}
+
+.source-link{
+    color:#a78bfa;
+    text-decoration:none;
+    font-weight:700;
+}
+
+.source-link:hover{
+    color:#c4b5fd;
+    text-decoration:underline;
 }
 
 .empty{
@@ -352,6 +365,9 @@ function renderMessages(messages){
         const time =
             new Date(msg.timestamp)
             .toLocaleString();
+        const sourceLink = msg.source_url
+            ? `<a class="source-link" href="${escapeAttr(msg.source_url)}" target="_blank" rel="noopener noreferrer">Go to source</a>`
+            : `<span>Source unavailable</span>`;
 
         return `
 
@@ -397,9 +413,7 @@ function renderMessages(messages){
                         Message ID: ${msg.id}
                     </span>
 
-                    <span>
-                        SQLite Storage
-                    </span>
+                    ${sourceLink}
 
                 </div>
 
@@ -419,6 +433,12 @@ function escapeHtml(text){
         .replace(/</g,'&lt;')
         .replace(/>/g,'&gt;')
         .replace(/"/g,'&quot;');
+}
+
+function escapeAttr(text){
+
+    return escapeHtml(text || '')
+        .replace(/'/g,'&#39;');
 }
 
 document

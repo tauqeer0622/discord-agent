@@ -17,6 +17,7 @@ MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "discord_agent_db")
 LEGACY_DB_PATH = os.getenv("LEGACY_DB_PATH", "discord_agent.db")
 HOURLY_REPLY_LIMIT = 10
 DAILY_REPLY_LIMIT = 100
+MESSAGE_RETENTION_DAYS = 7
 
 _client = None
 _database = None
@@ -56,6 +57,9 @@ def initialize_database():
     database.discord_messages.create_index(
         [("channel_id", ASCENDING), ("timestamp", DESCENDING)]
     )
+    database.discord_messages.create_index(
+        [("timestamp", ASCENDING)]
+    )
     database.channel_threads.create_index(
         [("channel_id", ASCENDING)],
         unique=True,
@@ -82,6 +86,7 @@ def initialize_database():
     )
 
     _migrate_legacy_sqlite(database)
+    delete_old_messages(MESSAGE_RETENTION_DAYS)
     logger.info("MongoDB database '%s' is ready.", MONGODB_DB_NAME)
 
 
@@ -253,6 +258,7 @@ def save_message(
     timestamp,
     channel_id=None,
     guild_id=None,
+    source_message_id=None,
 ):
     get_collection("discord_messages").insert_one(
         {
@@ -262,13 +268,66 @@ def save_message(
             "guild_name": guild_name,
             "channel_id": int(channel_id) if channel_id is not None else None,
             "guild_id": int(guild_id) if guild_id is not None else None,
+            "source_message_id": (
+                int(source_message_id) if source_message_id is not None else None
+            ),
+            "reply_content": None,
+            "reply_timestamp": None,
             "timestamp": _as_utc_datetime(timestamp),
         }
     )
+    delete_old_messages(MESSAGE_RETENTION_DAYS)
+
+
+def delete_old_messages(retention_days=MESSAGE_RETENTION_DAYS):
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    result = get_collection("discord_messages").delete_many(
+        {"timestamp": {"$lt": cutoff}}
+    )
+    if result.deleted_count:
+        logger.info(
+            "Deleted %s intercepted messages older than %s days.",
+            result.deleted_count,
+            retention_days,
+        )
+    return result.deleted_count
+
+
+def save_reply_for_latest_message(channel_id, reply_content, replied_at=None):
+    collection = get_collection("discord_messages")
+    document = collection.find_one(
+        {
+            "channel_id": int(channel_id),
+            "$or": [
+                {"reply_content": None},
+                {"reply_content": {"$exists": False}},
+            ],
+        },
+        sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
+    )
+    if not document:
+        document = collection.find_one(
+            {"channel_id": int(channel_id)},
+            sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
+        )
+    if not document:
+        return False
+
+    collection.update_one(
+        {"_id": document["_id"]},
+        {
+            "$set": {
+                "reply_content": reply_content,
+                "reply_timestamp": _as_utc_datetime(replied_at),
+            }
+        },
+    )
+    return True
 
 
 def get_messages():
     database = get_database()
+    delete_old_messages(MESSAGE_RETENTION_DAYS)
     active_channel_ids = [
         row["channel_id"]
         for row in database.discord_channels.find(
@@ -291,6 +350,13 @@ def get_messages():
             document["timestamp"].isoformat(),
             document.get("channel_id"),
             document.get("guild_id"),
+            document.get("source_message_id"),
+            document.get("reply_content"),
+            (
+                document["reply_timestamp"].isoformat()
+                if isinstance(document.get("reply_timestamp"), datetime)
+                else document.get("reply_timestamp")
+            ),
         )
         for document in documents
     ]

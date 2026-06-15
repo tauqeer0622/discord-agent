@@ -41,5 +41,7 @@ async def simulate_typing_and_send(channel, content: str):
     try:
         await channel.send(content)
         logger.info(f"Successfully sent message to {channel.name if hasattr(channel, 'name') else 'DM'}.")
+        return True
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
+        return False

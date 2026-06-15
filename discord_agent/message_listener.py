@@ -8,6 +8,7 @@ from database import (
     acquire_reply_slot,
     get_channel_thread,
     get_thread_mapping,
+    save_reply_for_latest_message,
     save_message,
 )
 from discord_permissions import is_restricted_text_channel
@@ -46,7 +47,16 @@ async def _handle_operator_reply(client, message):
         )
         return True
 
-    await simulate_typing_and_send(source_channel, message.content)
+    sent = await simulate_typing_and_send(source_channel, message.content)
+    if not sent:
+        await message.channel.send("Reply failed to send to the source channel.")
+        return True
+
+    save_reply_for_latest_message(
+        source_channel_id,
+        message.content,
+        message.created_at.isoformat(),
+    )
     await message.channel.send("Operator reply sent successfully.")
     logger.info(
         "Operator reply sent from thread %s to source channel %s",
@@ -97,6 +107,7 @@ async def process_message(client: discord.Client, message: discord.Message):
         timestamp=message.created_at.isoformat(),
         channel_id=message.channel.id,
         guild_id=message.guild.id,
+        source_message_id=message.id,
     )
 
     mapping = get_channel_thread(message.channel.id)

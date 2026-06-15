@@ -10,6 +10,7 @@ from database import (
     get_thread_mapping,
     save_message,
 )
+from discord_permissions import is_restricted_text_channel
 from priority_engine import is_target_question
 from state_manager import state
 from thread_manager import append_to_control_thread, create_control_thread
@@ -72,6 +73,13 @@ async def process_message(client: discord.Client, message: discord.Message):
 
     active_channel_ids = set(config_manager.get_active_channel_ids())
     if message.channel.id not in active_channel_ids:
+        return
+
+    if is_restricted_text_channel(message.channel):
+        logger.debug(
+            "Ignored message in restricted/private channel %s",
+            message.channel.id,
+        )
         return
 
     if not is_target_question(message.content):

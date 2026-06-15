@@ -10,6 +10,7 @@ from aiohttp import web
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
+from discord_permissions import is_restricted_text_channel
 from message_listener import process_message
 from state_manager import state
 from thread_manager import thread_cleanup_loop
@@ -153,6 +154,26 @@ class CommandCenterClient(discord.Client):
                     {"error": "'label' and 'channel_id' are required"},
                     status=400, headers=CORS_HEADERS,
                 )
+
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden):
+                    channel = None
+
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                return web.json_response(
+                    {"error": "Text channel not found or unavailable"},
+                    status=404, headers=CORS_HEADERS,
+                )
+
+            if is_restricted_text_channel(channel):
+                return web.json_response(
+                    {"error": "Restricted/private channels cannot be monitored"},
+                    status=403, headers=CORS_HEADERS,
+                )
+
             success = config_manager.add(label, channel_id, guild_id, guild_name)
             if not success:
                 return web.json_response(
@@ -264,7 +285,11 @@ class CommandCenterClient(discord.Client):
 
         # Return channel_id as STRING to prevent JavaScript 64-bit integer precision loss
         # Discord snowflake IDs exceed JS Number.MAX_SAFE_INTEGER (2^53)
-        channels = [{"channel_name": ch.name, "channel_id": str(ch.id)} for ch in guild.text_channels]
+        channels = [
+            {"channel_name": ch.name, "channel_id": str(ch.id)}
+            for ch in guild.text_channels
+            if not is_restricted_text_channel(ch)
+        ]
         return web.json_response(channels, headers=CORS_HEADERS)
 
     # ── Discord Events ─────────────────────────────────────────
@@ -284,7 +309,11 @@ class CommandCenterClient(discord.Client):
         subscribed = set()
         for guild in self.guilds:
             for ch in guild.text_channels:
-                if ch.id in active_ids and guild.id not in subscribed:
+                if (
+                    ch.id in active_ids
+                    and guild.id not in subscribed
+                    and not is_restricted_text_channel(ch)
+                ):
                     try:
                         await guild.subscribe()
                         subscribed.add(guild.id)

@@ -124,6 +124,42 @@
   font-family:monospace;
   font-size:.78rem;
   font-weight:700;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.tbl-c{min-width:0}
+
+.author-wrap{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+
+.av{
+  width:32px;
+  height:32px;
+  border-radius:50%;
+  flex:0 0 32px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:linear-gradient(135deg,var(--purple),var(--blue));
+  color:#fff;
+  font-size:.72rem;
+  font-weight:800;
+}
+
+.author-name{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:.82rem;
+  font-weight:700;
+  color:var(--text);
 }
 
 .full-content{

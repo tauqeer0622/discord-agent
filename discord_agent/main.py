@@ -269,6 +269,21 @@ class CommandCenterClient(discord.Client):
             memory = {}
         return web.json_response(memory, headers=CORS_HEADERS)
 
+    async def _get_current_guild_channels(self, guild):
+        try:
+            fetched_channels = await guild.fetch_channels()
+            return sorted(
+                fetched_channels,
+                key=lambda ch: getattr(ch, "position", 0),
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not fetch fresh channels for guild '%s'; using cache: %s",
+                getattr(guild, "name", guild.id),
+                e,
+            )
+            return guild.text_channels
+
     async def handle_get_channels(self, request):
         """Return text channels for a given guild (by id or name)."""
         guild_id_str = request.query.get("guild_id")
@@ -297,10 +312,12 @@ class CommandCenterClient(discord.Client):
 
         # Return channel_id as STRING to prevent JavaScript 64-bit integer precision loss
         # Discord snowflake IDs exceed JS Number.MAX_SAFE_INTEGER (2^53)
+        guild_channels = await self._get_current_guild_channels(guild)
         channels = [
             {"channel_name": ch.name, "channel_id": str(ch.id)}
-            for ch in guild.text_channels
-            if not is_restricted_text_channel(ch)
+            for ch in guild_channels
+            if isinstance(ch, discord.TextChannel)
+            and not is_restricted_text_channel(ch)
         ]
         return web.json_response(channels, headers=CORS_HEADERS)
 

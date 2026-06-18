@@ -13,5 +13,15 @@ def is_restricted_text_channel(channel) -> bool:
     if default_role is None:
         return False
 
+    channel_overwrite = channel.overwrites_for(default_role)
+    if _view_value(channel_overwrite) is False:
+        return True
+
+    category = getattr(channel, "category", None)
+    if category is not None:
+        category_overwrite = category.overwrites_for(default_role)
+        if _view_value(category_overwrite) is False:
+            return True
+
     default_permissions = channel.permissions_for(default_role)
     return _view_value(default_permissions) is False

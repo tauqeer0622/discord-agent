@@ -6,7 +6,7 @@ from database import get_messages
 from datetime import datetime, timezone
 
 import discord
-from aiohttp import web
+from aiohttp import ClientSession, web
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
@@ -33,6 +33,51 @@ CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, ngrok-skip-browser-warning",
 }
+
+DISCORD_API_BASE_URL = "https://discord.com/api/v9"
+DISCORD_TEXT_CHANNEL_TYPE = 0
+DISCORD_CATEGORY_CHANNEL_TYPE = 4
+VIEW_CHANNEL_PERMISSION = 1 << 10
+
+
+def _permission_value(overwrite, key):
+    try:
+        return int(overwrite.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _default_role_view_state(channel_data, guild_id):
+    guild_id = str(guild_id)
+    for overwrite in channel_data.get("permission_overwrites", []) or []:
+        if str(overwrite.get("id")) != guild_id:
+            continue
+        if _permission_value(overwrite, "deny") & VIEW_CHANNEL_PERMISSION:
+            return False
+        if _permission_value(overwrite, "allow") & VIEW_CHANNEL_PERMISSION:
+            return True
+    return None
+
+
+def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
+    channel_state = _default_role_view_state(channel_data, guild_id)
+    if channel_state is not None:
+        return channel_state is False
+
+    parent_id = channel_data.get("parent_id")
+    parent = category_by_id.get(str(parent_id)) if parent_id else None
+    if not parent:
+        return False
+
+    parent_state = _default_role_view_state(parent, guild_id)
+    return parent_state is False
+
+
+def _raw_channel_is_addable(channel_data, category_by_id, guild_id):
+    return (
+        channel_data.get("type") == DISCORD_TEXT_CHANNEL_TYPE
+        and not _raw_channel_is_locked(channel_data, category_by_id, guild_id)
+    )
 
 
 class CommandCenterClient(discord.Client):
@@ -167,6 +212,14 @@ class CommandCenterClient(discord.Client):
                     status=400, headers=CORS_HEADERS,
                 )
 
+            if guild_id:
+                addable_channels = await self._get_addable_raw_channels(guild_id)
+                if not any(int(ch["id"]) == channel_id for ch in addable_channels):
+                    return web.json_response(
+                        {"error": "Locked/private channels cannot be monitored"},
+                        status=403, headers=CORS_HEADERS,
+                    )
+
             channel = self.get_channel(channel_id)
             if channel is None:
                 try:
@@ -269,6 +322,37 @@ class CommandCenterClient(discord.Client):
             memory = {}
         return web.json_response(memory, headers=CORS_HEADERS)
 
+    async def _fetch_raw_guild_channels(self, guild_id):
+        headers = {
+            "Authorization": DISCORD_TOKEN,
+            "User-Agent": "Mozilla/5.0",
+        }
+        url = f"{DISCORD_API_BASE_URL}/guilds/{int(guild_id)}/channels"
+        async with ClientSession(headers=headers) as session:
+            async with session.get(url) as response:
+                if response.status >= 400:
+                    text = await response.text()
+                    raise RuntimeError(
+                        f"Discord channel fetch failed with HTTP {response.status}: {text[:200]}"
+                    )
+                data = await response.json()
+                if not isinstance(data, list):
+                    raise RuntimeError("Discord channel fetch returned unexpected data")
+                return data
+
+    async def _get_addable_raw_channels(self, guild_id):
+        raw_channels = await self._fetch_raw_guild_channels(guild_id)
+        category_by_id = {
+            str(ch["id"]): ch
+            for ch in raw_channels
+            if ch.get("type") == DISCORD_CATEGORY_CHANNEL_TYPE
+        }
+        return [
+            ch
+            for ch in sorted(raw_channels, key=lambda item: item.get("position", 0))
+            if _raw_channel_is_addable(ch, category_by_id, guild_id)
+        ]
+
     async def handle_get_channels(self, request):
         """Return text channels for a given guild (by id or name)."""
         guild_id_str = request.query.get("guild_id")
@@ -297,11 +381,23 @@ class CommandCenterClient(discord.Client):
 
         # Return channel_id as STRING to prevent JavaScript 64-bit integer precision loss
         # Discord snowflake IDs exceed JS Number.MAX_SAFE_INTEGER (2^53)
-        channels = [
-            {"channel_name": ch.name, "channel_id": str(ch.id)}
-            for ch in guild.text_channels
-            if not is_restricted_text_channel(ch)
-        ]
+        try:
+            raw_channels = await self._get_addable_raw_channels(guild.id)
+            channels = [
+                {"channel_name": ch.get("name", "unknown"), "channel_id": str(ch["id"])}
+                for ch in raw_channels
+            ]
+        except Exception as e:
+            logger.warning(
+                "Raw channel fetch failed for guild '%s'; using cache: %s",
+                guild.name,
+                e,
+            )
+            channels = [
+                {"channel_name": ch.name, "channel_id": str(ch.id)}
+                for ch in guild.text_channels
+                if not is_restricted_text_channel(ch)
+            ]
         return web.json_response(channels, headers=CORS_HEADERS)
 
     # ── Discord Events ─────────────────────────────────────────

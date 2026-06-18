@@ -34,22 +34,6 @@ CORS_HEADERS = {
     "Access-Control-Allow-Headers": "Content-Type, ngrok-skip-browser-warning",
 }
 
-TEXT_CHANNEL_TYPES = {
-    getattr(discord.ChannelType, "text", None),
-    getattr(discord.ChannelType, "news", None),
-}
-
-
-def is_text_channel(channel):
-    if isinstance(channel, discord.TextChannel):
-        return True
-
-    channel_type = getattr(channel, "type", None)
-    if channel_type in TEXT_CHANNEL_TYPES:
-        return True
-
-    return channel.__class__.__name__ == "TextChannel"
-
 
 class CommandCenterClient(discord.Client):
     def __init__(self):
@@ -190,7 +174,7 @@ class CommandCenterClient(discord.Client):
                 except (discord.NotFound, discord.Forbidden):
                     channel = None
 
-            if channel is None or not is_text_channel(channel):
+            if channel is None or not isinstance(channel, discord.TextChannel):
                 return web.json_response(
                     {"error": "Text channel not found or unavailable"},
                     status=404, headers=CORS_HEADERS,
@@ -332,7 +316,7 @@ class CommandCenterClient(discord.Client):
         channels = [
             {"channel_name": ch.name, "channel_id": str(ch.id)}
             for ch in guild_channels
-            if is_text_channel(ch)
+            if isinstance(ch, discord.TextChannel)
             and not is_restricted_text_channel(ch)
         ]
         return web.json_response(channels, headers=CORS_HEADERS)

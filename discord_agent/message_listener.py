@@ -11,7 +11,7 @@ from database import (
     save_reply_for_latest_message,
     save_message,
 )
-from discord_permissions import is_restricted_text_channel
+from discord_permissions import can_view_text_channel, is_restricted_text_channel
 from priority_engine import is_target_question
 from state_manager import state
 from thread_manager import append_to_control_thread, create_control_thread
@@ -85,7 +85,10 @@ async def process_message(client: discord.Client, message: discord.Message):
     if message.channel.id not in active_channel_ids:
         return
 
-    if is_restricted_text_channel(message.channel, client.user):
+    if (
+        is_restricted_text_channel(message.channel, client.user)
+        or not can_view_text_channel(message.channel, client.user)
+    ):
         logger.debug(
             "Ignored message in restricted/private channel %s",
             message.channel.id,

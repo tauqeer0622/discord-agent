@@ -10,7 +10,7 @@ from aiohttp import ClientSession, web
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
-from discord_permissions import is_restricted_text_channel
+from discord_permissions import can_view_text_channel, is_restricted_text_channel
 from message_listener import process_message
 from state_manager import state
 from thread_manager import thread_cleanup_loop
@@ -51,6 +51,17 @@ def _permission_value(overwrite, key):
         return int(overwrite.get(key, 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _default_role_view_state(channel_data, guild_id):
+    for overwrite in channel_data.get("permission_overwrites", []) or []:
+        if str(overwrite.get("id")) != str(guild_id):
+            continue
+        if _permission_value(overwrite, "deny") & VIEW_CHANNEL_PERMISSION:
+            return False
+        if _permission_value(overwrite, "allow") & VIEW_CHANNEL_PERMISSION:
+            return True
+    return None
 
 
 def _permissions_value(discord_object):
@@ -146,12 +157,27 @@ def _raw_channel_permissions(channel_data, category_by_id, guild, member):
     return _apply_member_overwrites(permissions, overwrites, guild.id, member)
 
 
+def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
+    channel_state = _default_role_view_state(channel_data, guild_id)
+    if channel_state is not None:
+        return channel_state is False
+
+    parent_id = channel_data.get("parent_id")
+    parent = category_by_id.get(str(parent_id)) if parent_id else None
+    if not parent:
+        return False
+
+    parent_state = _default_role_view_state(parent, guild_id)
+    return parent_state is False
+
+
 def _raw_channel_is_addable(channel_data, category_by_id, guild, user):
     member = _current_member(guild, user)
     permissions = _raw_channel_permissions(channel_data, category_by_id, guild, member)
     return (
         channel_data.get("type") in DISCORD_ADDABLE_CHANNEL_TYPES
         and bool(permissions & VIEW_CHANNEL_PERMISSION)
+        and not _raw_channel_is_locked(channel_data, category_by_id, guild.id)
     )
 
 
@@ -314,7 +340,7 @@ class CommandCenterClient(discord.Client):
                     status=404, headers=CORS_HEADERS,
                 )
 
-            if is_restricted_text_channel(channel, self.user):
+            if is_restricted_text_channel(channel, self.user) or not can_view_text_channel(channel, self.user):
                 return web.json_response(
                     {"error": "Restricted/private channels cannot be monitored"},
                     status=403, headers=CORS_HEADERS,
@@ -477,7 +503,10 @@ class CommandCenterClient(discord.Client):
             channels = [
                 {"channel_name": ch.name, "channel_id": str(ch.id)}
                 for ch in guild.text_channels
-                if not is_restricted_text_channel(ch, self.user)
+                if (
+                    not is_restricted_text_channel(ch, self.user)
+                    and can_view_text_channel(ch, self.user)
+                )
             ]
         return web.json_response(channels, headers=CORS_HEADERS)
 
@@ -502,6 +531,7 @@ class CommandCenterClient(discord.Client):
                     ch.id in active_ids
                     and guild.id not in subscribed
                     and not is_restricted_text_channel(ch, self.user)
+                    and can_view_text_channel(ch, self.user)
                 ):
                     try:
                         await guild.subscribe()

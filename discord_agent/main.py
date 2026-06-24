@@ -67,6 +67,8 @@ def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
     channel_state = _default_role_view_state(channel_data, guild_id)
     if channel_state is not None:
         return channel_state is False
+    if channel_data.get("permission_overwrites"):
+        return False
 
     parent_id = channel_data.get("parent_id")
     parent = category_by_id.get(str(parent_id)) if parent_id else None

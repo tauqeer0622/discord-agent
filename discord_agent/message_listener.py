@@ -85,7 +85,7 @@ async def process_message(client: discord.Client, message: discord.Message):
     if message.channel.id not in active_channel_ids:
         return
 
-    if is_restricted_text_channel(message.channel):
+    if is_restricted_text_channel(message.channel, client.user):
         logger.debug(
             "Ignored message in restricted/private channel %s",
             message.channel.id,

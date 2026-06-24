@@ -10,7 +10,11 @@ from aiohttp import ClientSession, web
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
-from discord_permissions import is_restricted_text_channel
+from discord_permissions import (
+    can_send_messages,
+    is_locked_or_private_channel,
+    is_restricted_text_channel,
+)
 from message_listener import process_message
 from state_manager import state
 from thread_manager import thread_cleanup_loop
@@ -43,6 +47,8 @@ DISCORD_ADDABLE_CHANNEL_TYPES = {
     DISCORD_ANNOUNCEMENT_CHANNEL_TYPE,
 }
 VIEW_CHANNEL_PERMISSION = 1 << 10
+SEND_MESSAGES_PERMISSION = 1 << 11
+ADMINISTRATOR_PERMISSION = 1 << 3
 GATE_CHANNEL_NAME_PARTS = (
     "access",
     "verify",
@@ -68,16 +74,90 @@ def _default_role_view_state(channel_data, guild_id):
     return None
 
 
-def _channel_name_key(name):
-    return "".join(
-        char.lower() if char.isalnum() else "-"
-        for char in str(name or "")
-    ).strip("-")
+def _role_permission_value(role):
+    permissions = getattr(role, "permissions", None)
+    return int(getattr(permissions, "value", 0) or 0)
 
 
-def _is_gate_channel_name(name):
-    key = _channel_name_key(name)
-    return any(part in key for part in GATE_CHANNEL_NAME_PARTS)
+def _current_guild_member(guild, user):
+    user_id = getattr(user, "id", None)
+    if user_id is not None and hasattr(guild, "get_member"):
+        member = guild.get_member(user_id)
+        if member is not None:
+            return member
+    return getattr(guild, "me", None)
+
+
+def _base_member_permissions(guild, member):
+    default_role = getattr(guild, "default_role", None)
+    permissions = _role_permission_value(default_role)
+
+    for role in getattr(member, "roles", []) or []:
+        if getattr(role, "id", None) == getattr(guild, "id", None):
+            continue
+        permissions |= _role_permission_value(role)
+
+    return permissions
+
+
+def _apply_raw_overwrite(permissions, overwrite):
+    allow = _permission_value(overwrite, "allow")
+    deny = _permission_value(overwrite, "deny")
+    return (permissions & ~deny) | allow
+
+
+def _raw_effective_permissions(channel_data, category_by_id, guild, user):
+    member = _current_guild_member(guild, user)
+    user_id = getattr(user, "id", None)
+    role_ids = {
+        str(getattr(role, "id", ""))
+        for role in getattr(member, "roles", []) or []
+    }
+    role_ids.add(str(guild.id))
+
+    permissions = _base_member_permissions(guild, member)
+    if permissions & ADMINISTRATOR_PERMISSION:
+        return permissions | VIEW_CHANNEL_PERMISSION | SEND_MESSAGES_PERMISSION
+
+    permission_source = channel_data
+    if not channel_data.get("permission_overwrites"):
+        parent_id = channel_data.get("parent_id")
+        parent = category_by_id.get(str(parent_id)) if parent_id else None
+        if parent:
+            permission_source = parent
+
+    overwrites = permission_source.get("permission_overwrites", []) or []
+
+    for overwrite in overwrites:
+        if str(overwrite.get("id")) == str(guild.id):
+            permissions = _apply_raw_overwrite(permissions, overwrite)
+            break
+
+    deny = 0
+    allow = 0
+    for overwrite in overwrites:
+        if str(overwrite.get("id")) == str(guild.id):
+            continue
+        if overwrite.get("type") == 0 and str(overwrite.get("id")) in role_ids:
+            deny |= _permission_value(overwrite, "deny")
+            allow |= _permission_value(overwrite, "allow")
+    permissions = (permissions & ~deny) | allow
+
+    if user_id is not None:
+        for overwrite in overwrites:
+            if overwrite.get("type") == 1 and str(overwrite.get("id")) == str(user_id):
+                permissions = _apply_raw_overwrite(permissions, overwrite)
+                break
+
+    return permissions
+
+
+def _raw_channel_can_send(channel_data, category_by_id, guild, user):
+    permissions = _raw_effective_permissions(channel_data, category_by_id, guild, user)
+    return (
+        bool(permissions & VIEW_CHANNEL_PERMISSION)
+        and bool(permissions & SEND_MESSAGES_PERMISSION)
+    )
 
 
 def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
@@ -96,11 +176,32 @@ def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
     return parent_state is False
 
 
-def _raw_channel_is_addable(channel_data, category_by_id, guild):
+def _channel_name_key(name):
+    return "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in str(name or "")
+    ).strip("-")
+
+
+def _is_gate_channel_name(name):
+    key = _channel_name_key(name)
+    return any(part in key for part in GATE_CHANNEL_NAME_PARTS)
+
+
+def _raw_channel_is_addable(channel_data, category_by_id, guild, user):
+    cached_channel = guild.get_channel(int(channel_data["id"]))
+    if cached_channel is not None:
+        can_send = can_send_messages(cached_channel, user)
+        is_locked = is_locked_or_private_channel(cached_channel)
+    else:
+        can_send = _raw_channel_can_send(channel_data, category_by_id, guild, user)
+        is_locked = _raw_channel_is_locked(channel_data, category_by_id, guild.id)
+
     return (
         channel_data.get("type") in DISCORD_ADDABLE_CHANNEL_TYPES
         and not _is_gate_channel_name(channel_data.get("name"))
-        and not _raw_channel_is_locked(channel_data, category_by_id, guild.id)
+        and not is_locked
+        and can_send
     )
 
 
@@ -380,7 +481,7 @@ class CommandCenterClient(discord.Client):
         return [
             ch
             for ch in sorted(raw_channels, key=lambda item: item.get("position", 0))
-            if _raw_channel_is_addable(ch, category_by_id, guild)
+            if _raw_channel_is_addable(ch, category_by_id, guild, self.user)
         ]
 
     async def handle_get_channels(self, request):

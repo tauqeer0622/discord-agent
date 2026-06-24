@@ -43,6 +43,11 @@ DISCORD_ADDABLE_CHANNEL_TYPES = {
     DISCORD_ANNOUNCEMENT_CHANNEL_TYPE,
 }
 VIEW_CHANNEL_PERMISSION = 1 << 10
+GATE_CHANNEL_NAME_PARTS = (
+    "access",
+    "verify",
+    "verification",
+)
 
 
 def _permission_value(overwrite, key):
@@ -61,6 +66,18 @@ def _default_role_view_state(channel_data, guild_id):
         if _permission_value(overwrite, "allow") & VIEW_CHANNEL_PERMISSION:
             return True
     return None
+
+
+def _channel_name_key(name):
+    return "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in str(name or "")
+    ).strip("-")
+
+
+def _is_gate_channel_name(name):
+    key = _channel_name_key(name)
+    return any(part in key for part in GATE_CHANNEL_NAME_PARTS)
 
 
 def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
@@ -82,6 +99,7 @@ def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
 def _raw_channel_is_addable(channel_data, category_by_id, guild):
     return (
         channel_data.get("type") in DISCORD_ADDABLE_CHANNEL_TYPES
+        and not _is_gate_channel_name(channel_data.get("name"))
         and not _raw_channel_is_locked(channel_data, category_by_id, guild.id)
     )
 
@@ -408,7 +426,10 @@ class CommandCenterClient(discord.Client):
             channels = [
                 {"channel_name": ch.name, "channel_id": str(ch.id)}
                 for ch in guild.text_channels
-                if not is_restricted_text_channel(ch, self.user)
+                if (
+                    not _is_gate_channel_name(ch.name)
+                    and not is_restricted_text_channel(ch, self.user)
+                )
             ]
         return web.json_response(channels, headers=CORS_HEADERS)
 

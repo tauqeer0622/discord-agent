@@ -10,7 +10,7 @@ from aiohttp import ClientSession, web
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
-from discord_permissions import can_view_text_channel, is_restricted_text_channel
+from discord_permissions import is_restricted_text_channel
 from message_listener import process_message
 from state_manager import state
 from thread_manager import thread_cleanup_loop
@@ -43,7 +43,6 @@ DISCORD_ADDABLE_CHANNEL_TYPES = {
     DISCORD_ANNOUNCEMENT_CHANNEL_TYPE,
 }
 VIEW_CHANNEL_PERMISSION = 1 << 10
-ADMINISTRATOR_PERMISSION = 1 << 3
 
 
 def _permission_value(overwrite, key):
@@ -64,99 +63,6 @@ def _default_role_view_state(channel_data, guild_id):
     return None
 
 
-def _permissions_value(discord_object):
-    permissions = getattr(discord_object, "permissions", None)
-    value = getattr(permissions, "value", permissions)
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _current_member(guild, user):
-    for attr in ("me", "self_member"):
-        member = getattr(guild, attr, None)
-        if callable(member):
-            member = member()
-        if member is not None and getattr(member, "id", None) == getattr(user, "id", None):
-            return member
-
-    if hasattr(guild, "get_member"):
-        return guild.get_member(user.id)
-
-    return None
-
-
-def _role_ids_for_member(member):
-    return {
-        str(role.id)
-        for role in getattr(member, "roles", []) or []
-        if getattr(role, "id", None) is not None
-    }
-
-
-def _base_permissions_for_member(guild, member):
-    permissions = _permissions_value(getattr(guild, "default_role", None))
-    if member is None:
-        return permissions
-
-    if getattr(guild, "owner_id", None) == getattr(member, "id", None):
-        return permissions | VIEW_CHANNEL_PERMISSION | ADMINISTRATOR_PERMISSION
-
-    for role in getattr(member, "roles", []) or []:
-        permissions |= _permissions_value(role)
-
-    return permissions
-
-
-def _apply_member_overwrites(permissions, overwrites, guild_id, member):
-    role_ids = _role_ids_for_member(member)
-    member_id = str(getattr(member, "id", "")) if member is not None else None
-
-    everyone_overwrite = None
-    role_allow = 0
-    role_deny = 0
-    member_overwrite = None
-
-    for overwrite in overwrites or []:
-        overwrite_id = str(overwrite.get("id"))
-        if overwrite_id == str(guild_id):
-            everyone_overwrite = overwrite
-        elif overwrite_id in role_ids:
-            role_allow |= _permission_value(overwrite, "allow")
-            role_deny |= _permission_value(overwrite, "deny")
-        elif member_id and overwrite_id == member_id:
-            member_overwrite = overwrite
-
-    if everyone_overwrite:
-        permissions &= ~_permission_value(everyone_overwrite, "deny")
-        permissions |= _permission_value(everyone_overwrite, "allow")
-
-    permissions &= ~role_deny
-    permissions |= role_allow
-
-    if member_overwrite:
-        permissions &= ~_permission_value(member_overwrite, "deny")
-        permissions |= _permission_value(member_overwrite, "allow")
-
-    return permissions
-
-
-def _raw_channel_permissions(channel_data, category_by_id, guild, member):
-    permissions = _base_permissions_for_member(guild, member)
-    if permissions & ADMINISTRATOR_PERMISSION:
-        return permissions
-
-    parent_id = channel_data.get("parent_id")
-    parent = category_by_id.get(str(parent_id)) if parent_id else None
-    channel_overwrites = channel_data.get("permission_overwrites", []) or []
-    overwrites = channel_overwrites
-    if not overwrites and parent:
-        overwrites = parent.get("permission_overwrites", []) or []
-
-    return _apply_member_overwrites(permissions, overwrites, guild.id, member)
-
-
 def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
     channel_state = _default_role_view_state(channel_data, guild_id)
     if channel_state is not None:
@@ -171,12 +77,9 @@ def _raw_channel_is_locked(channel_data, category_by_id, guild_id):
     return parent_state is False
 
 
-def _raw_channel_is_addable(channel_data, category_by_id, guild, user):
-    member = _current_member(guild, user)
-    permissions = _raw_channel_permissions(channel_data, category_by_id, guild, member)
+def _raw_channel_is_addable(channel_data, category_by_id, guild):
     return (
         channel_data.get("type") in DISCORD_ADDABLE_CHANNEL_TYPES
-        and bool(permissions & VIEW_CHANNEL_PERMISSION)
         and not _raw_channel_is_locked(channel_data, category_by_id, guild.id)
     )
 
@@ -340,7 +243,7 @@ class CommandCenterClient(discord.Client):
                     status=404, headers=CORS_HEADERS,
                 )
 
-            if is_restricted_text_channel(channel, self.user) or not can_view_text_channel(channel, self.user):
+            if is_restricted_text_channel(channel, self.user):
                 return web.json_response(
                     {"error": "Restricted/private channels cannot be monitored"},
                     status=403, headers=CORS_HEADERS,
@@ -457,7 +360,7 @@ class CommandCenterClient(discord.Client):
         return [
             ch
             for ch in sorted(raw_channels, key=lambda item: item.get("position", 0))
-            if _raw_channel_is_addable(ch, category_by_id, guild, self.user)
+            if _raw_channel_is_addable(ch, category_by_id, guild)
         ]
 
     async def handle_get_channels(self, request):
@@ -503,10 +406,7 @@ class CommandCenterClient(discord.Client):
             channels = [
                 {"channel_name": ch.name, "channel_id": str(ch.id)}
                 for ch in guild.text_channels
-                if (
-                    not is_restricted_text_channel(ch, self.user)
-                    and can_view_text_channel(ch, self.user)
-                )
+                if not is_restricted_text_channel(ch, self.user)
             ]
         return web.json_response(channels, headers=CORS_HEADERS)
 
@@ -531,7 +431,6 @@ class CommandCenterClient(discord.Client):
                     ch.id in active_ids
                     and guild.id not in subscribed
                     and not is_restricted_text_channel(ch, self.user)
-                    and can_view_text_channel(ch, self.user)
                 ):
                     try:
                         await guild.subscribe()

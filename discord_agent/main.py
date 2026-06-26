@@ -2,8 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import random
 from database import get_messages
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from aiohttp import ClientSession, web
@@ -16,6 +17,7 @@ from discord_permissions import (
     is_restricted_text_channel,
 )
 from message_listener import process_message
+from promo_sender import generate_promo_variant
 from state_manager import state
 from thread_manager import thread_cleanup_loop
 
@@ -37,6 +39,15 @@ CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, ngrok-skip-browser-warning",
 }
+
+try:
+    PROMO_MAX_CHANNELS = max(1, int(os.getenv("PROMO_MAX_CHANNELS", "100")))
+except ValueError:
+    PROMO_MAX_CHANNELS = 100
+PROMO_DEFAULT_MIN_DELAY_SECONDS = 120
+PROMO_DEFAULT_MAX_DELAY_SECONDS = 300
+PROMO_MAX_MESSAGE_LENGTH = 1900
+BULK_PROMO_ENABLED = os.getenv("BULK_PROMO_ENABLED", "true").lower() == "true"
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v9"
 DISCORD_TEXT_CHANNEL_TYPE = 0
@@ -213,6 +224,8 @@ class CommandCenterClient(discord.Client):
         self.web_runner = None
         self.thread_cleanup_started = False
         self.start_time = datetime.now(timezone.utc)
+        self.bulk_promo_job = None
+        self.bulk_promo_task = None
 
     # ── Web Server ─────────────────────────────────────────────
 
@@ -232,6 +245,11 @@ class CommandCenterClient(discord.Client):
             web.post("/api/configs",                      self.handle_post_config),
             web.delete("/api/configs/{channel_id}",       self.handle_delete_config),
             web.patch("/api/configs/{channel_id}/toggle", self.handle_toggle_config),
+            # Bulk promo
+            web.post("/api/bulk-promo/preview",           self.handle_bulk_promo_preview),
+            web.post("/api/bulk-promo/send",              self.handle_bulk_promo_send),
+            web.post("/api/bulk-promo/cancel",            self.handle_bulk_promo_cancel),
+            web.get("/api/bulk-promo/status",             self.handle_bulk_promo_status),
             # CORS pre-flight (catch-all)
             web.options("/{path_info:.*}",                self.handle_options_generic),
             web.get("/messages", self.handle_messages_page),
@@ -402,6 +420,339 @@ class CommandCenterClient(discord.Client):
             return web.json_response({"success": True, "active": new_state}, headers=CORS_HEADERS)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def _get_bulk_promo_targets(self, channel_ids=None, max_channels=None):
+        selected_ids = {str(item) for item in channel_ids or [] if str(item).strip()}
+        configs = [
+            config
+            for config in config_manager.get_all()
+            if config.get("active", True)
+        ]
+        if selected_ids:
+            configs = [
+                config
+                for config in configs
+                if str(config.get("channel_id")) in selected_ids
+            ]
+
+        targets = []
+        target_limit = min(max_channels, PROMO_MAX_CHANNELS) if max_channels else PROMO_MAX_CHANNELS
+        for config in configs:
+            if len(targets) >= target_limit:
+                break
+
+            channel_id = int(config["channel_id"])
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden):
+                    channel = None
+
+            target = {
+                "channel_id": str(channel_id),
+                "label": config.get("label") or str(channel_id),
+                "guild_id": str(config.get("guild_id") or ""),
+                "guild_name": config.get("guild_name") or "",
+                "channel_name": getattr(channel, "name", config.get("label") or str(channel_id)),
+            }
+
+            if channel is None or not isinstance(channel, discord.TextChannel):
+                target["status"] = "unavailable"
+                target["error"] = "Text channel unavailable"
+                targets.append(target)
+                continue
+
+            if is_restricted_text_channel(channel, self.user):
+                target["status"] = "blocked"
+                target["error"] = "Channel is locked/private or cannot be posted in"
+                targets.append(target)
+                continue
+
+            target["status"] = "ready"
+            target["_channel"] = channel
+            targets.append(target)
+
+        return targets
+
+    def _parse_optional_positive_int(self, value, default=None, maximum=None):
+        if value in (None, ""):
+            return default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        if parsed < 1:
+            return default
+        if maximum is not None:
+            return min(parsed, maximum)
+        return parsed
+
+    def _validate_bulk_message(self, base_message):
+        if len(base_message) < 5:
+            return "Promo message is required"
+        if len(base_message) > PROMO_MAX_MESSAGE_LENGTH:
+            return f"Promo message must be under {PROMO_MAX_MESSAGE_LENGTH} characters"
+        return None
+
+    def _public_bulk_target(self, target):
+        return {
+            key: value
+            for key, value in target.items()
+            if not key.startswith("_")
+        }
+
+    async def _build_bulk_promo_variants(self, base_message, targets):
+        ready_targets = [target for target in targets if target.get("status") == "ready"]
+        total = len(ready_targets)
+        if not total:
+            return []
+
+        previews = []
+        for index, target in enumerate(ready_targets, start=1):
+            preview = self._public_bulk_target(target)
+            try:
+                content = await generate_promo_variant(base_message, target, index, total)
+                if not content:
+                    raise RuntimeError("Generated message was empty")
+                if len(content) > PROMO_MAX_MESSAGE_LENGTH:
+                    raise RuntimeError("Generated message was too long")
+                preview["content"] = content
+            except Exception as e:
+                preview["status"] = "preview_failed"
+                preview["error"] = str(e)
+            previews.append(preview)
+        return previews
+
+    def _bulk_promo_status_response(self):
+        if not self.bulk_promo_job:
+            return {"running": False, "job": None}
+        data = dict(self.bulk_promo_job)
+        data["running"] = bool(self.bulk_promo_task and not self.bulk_promo_task.done())
+        if data.get("next_send_at") and data["running"]:
+            try:
+                next_send_at = datetime.fromisoformat(data["next_send_at"])
+                remaining = int((next_send_at - datetime.now(timezone.utc)).total_seconds())
+                data["next_delay_seconds"] = max(0, remaining)
+            except (TypeError, ValueError):
+                pass
+        return {"running": data["running"], "job": data}
+
+    async def handle_bulk_promo_preview(self, request):
+        try:
+            if not BULK_PROMO_ENABLED:
+                return web.json_response(
+                    {"error": "Bulk promo sender is disabled"},
+                    status=403, headers=CORS_HEADERS,
+                )
+
+            data = await request.json()
+            base_message = str(data.get("base_message", "")).strip()
+            validation_error = self._validate_bulk_message(base_message)
+            if validation_error:
+                return web.json_response(
+                    {"error": validation_error},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            max_channels = self._parse_optional_positive_int(
+                data.get("max_channels"),
+                maximum=PROMO_MAX_CHANNELS,
+            )
+            targets = await self._get_bulk_promo_targets(
+                data.get("channel_ids"),
+                max_channels=max_channels,
+            )
+            previews = await self._build_bulk_promo_variants(base_message, targets)
+            return web.json_response(
+                {
+                    "targets": [self._public_bulk_target(target) for target in targets],
+                    "previews": previews,
+                },
+                headers=CORS_HEADERS,
+            )
+        except Exception as e:
+            logger.error("bulk promo preview error: %s", e)
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_bulk_promo_send(self, request):
+        try:
+            if not BULK_PROMO_ENABLED:
+                return web.json_response(
+                    {"error": "Bulk promo sender is disabled"},
+                    status=403, headers=CORS_HEADERS,
+                )
+
+            if self.bulk_promo_task and not self.bulk_promo_task.done():
+                return web.json_response(
+                    {"error": "A bulk promo send is already running"},
+                    status=409, headers=CORS_HEADERS,
+                )
+
+            data = await request.json()
+            base_message = str(data.get("base_message", "")).strip()
+            validation_error = self._validate_bulk_message(base_message)
+            if validation_error:
+                return web.json_response(
+                    {"error": validation_error},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            requested_min_delay = self._parse_optional_positive_int(
+                data.get("min_delay_seconds"),
+                default=PROMO_DEFAULT_MIN_DELAY_SECONDS,
+            )
+            requested_max_delay = self._parse_optional_positive_int(
+                data.get("max_delay_seconds"),
+                default=PROMO_DEFAULT_MAX_DELAY_SECONDS,
+            )
+            min_delay = max(
+                PROMO_DEFAULT_MIN_DELAY_SECONDS,
+                requested_min_delay,
+            )
+            max_delay = min(
+                PROMO_DEFAULT_MAX_DELAY_SECONDS,
+                requested_max_delay,
+            )
+            if max_delay < min_delay:
+                max_delay = min_delay
+
+            preview_content = {
+                str(item.get("channel_id")): str(item.get("content", "")).strip()
+                for item in data.get("previews", [])
+                if (
+                    item.get("channel_id")
+                    and str(item.get("content", "")).strip()
+                    and len(str(item.get("content", "")).strip()) <= PROMO_MAX_MESSAGE_LENGTH
+                )
+            }
+            if not preview_content:
+                return web.json_response(
+                    {"error": "Preview is required before sending"},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            max_channels = self._parse_optional_positive_int(
+                data.get("max_channels"),
+                maximum=PROMO_MAX_CHANNELS,
+            )
+            targets = await self._get_bulk_promo_targets(
+                list(preview_content.keys()),
+                max_channels=max_channels,
+            )
+            ready_targets = [target for target in targets if target.get("status") == "ready"]
+            if not ready_targets:
+                return web.json_response(
+                    {"error": "No monitored channels are ready for promo sending"},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            self.bulk_promo_job = {
+                "status": "running",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": None,
+                "base_message": base_message,
+                "min_delay_seconds": min_delay,
+                "max_delay_seconds": max_delay,
+                "total": len(ready_targets),
+                "sent": 0,
+                "failed": 0,
+                "results": [],
+                "current_channel_id": None,
+                "next_send_at": None,
+            }
+            self.bulk_promo_task = asyncio.create_task(
+                self._run_bulk_promo_job(
+                    base_message,
+                    ready_targets,
+                    preview_content,
+                    min_delay,
+                    max_delay,
+                )
+            )
+            return web.json_response(
+                self._bulk_promo_status_response(),
+                status=202, headers=CORS_HEADERS,
+            )
+        except Exception as e:
+            logger.error("bulk promo send error: %s", e)
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_bulk_promo_cancel(self, request):
+        if not self.bulk_promo_task or self.bulk_promo_task.done():
+            return web.json_response(
+                {"error": "No bulk promo send is running"},
+                status=404, headers=CORS_HEADERS,
+            )
+        self.bulk_promo_task.cancel()
+        return web.json_response(
+            self._bulk_promo_status_response(),
+            headers=CORS_HEADERS,
+        )
+
+    async def handle_bulk_promo_status(self, request):
+        return web.json_response(
+            self._bulk_promo_status_response(),
+            headers=CORS_HEADERS,
+        )
+
+    async def _run_bulk_promo_job(
+        self,
+        base_message,
+        targets,
+        preview_content,
+        min_delay,
+        max_delay,
+    ):
+        try:
+            for index, target in enumerate(targets, start=1):
+                result = self._public_bulk_target(target)
+                self.bulk_promo_job["current_channel_id"] = str(target["channel_id"])
+                try:
+                    content = preview_content.get(str(target["channel_id"]))
+                    if not content:
+                        content = await generate_promo_variant(
+                            base_message,
+                            target,
+                            index,
+                            len(targets),
+                        )
+                    if not content or len(content) > PROMO_MAX_MESSAGE_LENGTH:
+                        raise RuntimeError("Promo message was empty or too long")
+
+                    await target["_channel"].send(content)
+                    result["status"] = "sent"
+                    result["content"] = content
+                    result["sent_at"] = datetime.now(timezone.utc).isoformat()
+                    self.bulk_promo_job["sent"] += 1
+                except Exception as e:
+                    result["status"] = "failed"
+                    result["error"] = str(e)
+                    self.bulk_promo_job["failed"] += 1
+
+                self.bulk_promo_job["results"].append(result)
+
+                if index < len(targets):
+                    delay = random.randint(min_delay, max_delay)
+                    self.bulk_promo_job["next_delay_seconds"] = delay
+                    self.bulk_promo_job["next_send_at"] = (
+                        datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    ).isoformat()
+                    await asyncio.sleep(delay)
+
+            self.bulk_promo_job["status"] = "completed"
+        except asyncio.CancelledError:
+            self.bulk_promo_job["status"] = "cancelled"
+            raise
+        except Exception as e:
+            logger.error("bulk promo job failed: %s", e)
+            self.bulk_promo_job["status"] = "failed"
+            self.bulk_promo_job["error"] = str(e)
+        finally:
+            self.bulk_promo_job["finished_at"] = datetime.now(timezone.utc).isoformat()
+            self.bulk_promo_job["current_channel_id"] = None
+            self.bulk_promo_job.pop("next_delay_seconds", None)
+            self.bulk_promo_job.pop("next_send_at", None)
 
     async def handle_get_guilds(self, request):
         """Return all guilds by calling Discord API directly."""

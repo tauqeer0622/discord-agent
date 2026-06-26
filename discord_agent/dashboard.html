@@ -249,8 +249,16 @@
       outline:none;appearance:none;cursor:pointer;
       transition:border-color .2s,background .2s;
     }
+    .form-textarea{
+      width:100%;min-height:110px;resize:vertical;padding:10px 14px;border-radius:10px;
+      background:rgba(255,255,255,.05);border:1px solid var(--border);
+      color:var(--text);font-size:.85rem;font-family:'Inter',sans-serif;
+      outline:none;line-height:1.45;
+      transition:border-color .2s,background .2s;
+    }
     .form-select:hover,.form-input:hover{border-color:var(--border-h)}
-    .form-select:focus,.form-input:focus{border-color:var(--purple);background:rgba(124,58,237,.07)}
+    .form-textarea:hover{border-color:var(--border-h)}
+    .form-select:focus,.form-input:focus,.form-textarea:focus{border-color:var(--purple);background:rgba(124,58,237,.07)}
     .form-select option{background:#1a1a2e;color:var(--text)}
     .form-select:disabled{opacity:.45;cursor:not-allowed}
     .multi-select{position:relative}
@@ -296,6 +304,15 @@
     .form-msg{font-size:.78rem;padding:8px 12px;border-radius:8px;text-align:center;display:none}
     .form-msg.ok{background:rgba(22,163,74,.15);color:var(--green-l);border:1px solid rgba(22,163,74,.25);display:block}
     .form-msg.err{background:rgba(220,38,38,.15);color:var(--red-l);border:1px solid rgba(220,38,38,.25);display:block}
+    .form-msg.info{background:rgba(37,99,235,.14);color:var(--blue-l);border:1px solid rgba(37,99,235,.25);display:block}
+    .wide-card{grid-column:1/-1}
+    .bulk-grid{display:grid;grid-template-columns:1fr 220px;gap:1rem;align-items:start}
+    .bulk-actions{display:flex;flex-direction:column;gap:.75rem}
+    .bulk-list{display:grid;gap:.65rem;margin-top:.25rem}
+    .bulk-item{padding:.75rem;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03)}
+    .bulk-meta{font-size:.72rem;color:var(--text3);font-weight:700;margin-bottom:.35rem}
+    .bulk-content{font-size:.82rem;color:var(--text2);line-height:1.45;white-space:pre-wrap;word-break:break-word}
+    .bulk-status{font-size:.76rem;color:var(--text2);line-height:1.6}
 
     /* ── Config list ─────────────────────────────────────────────── */
     .cfg-row{display:grid;grid-template-columns:1fr auto auto auto;padding:1rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:1rem;transition:background .2s}
@@ -518,6 +535,29 @@
           </div>
         </div>
 
+        <div class="card wide-card">
+          <div class="card-head">
+            <span class="card-title">Bulk Promo Sender</span>
+            <span class="pill" id="bulkPill">Idle</span>
+          </div>
+          <div class="form-body">
+            <div class="bulk-grid">
+              <div class="form-group">
+                <label class="form-label" for="bulkMessage">Promo Message</label>
+                <textarea class="form-textarea" id="bulkMessage" placeholder="Enter the base promo message"></textarea>
+              </div>
+              <div class="bulk-actions">
+                <button class="btn-add" id="btnBulkPreview" onclick="previewBulkPromo()">Preview</button>
+                <button class="btn-add" id="btnBulkSend" onclick="sendBulkPromo()" disabled>Start Send</button>
+                <button class="btn-add" id="btnBulkCancel" onclick="cancelBulkPromo()" disabled>Cancel</button>
+              </div>
+            </div>
+            <div class="form-msg" id="bulkMsg"></div>
+            <div class="bulk-status" id="bulkStatus"></div>
+            <div class="bulk-list" id="bulkPreviewList"></div>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -536,6 +576,9 @@ let guilds  = [];
 let selGuildId   = null;
 let availableChannels = [];
 let selectedChannelIds = new Set();
+let bulkPromoPreviews = [];
+let bulkPromoPoll = null;
+let bulkPromoPreviewBase = '';
 
 /* ── Utils ───────────────────────────────────────────────────── */
 const $  = id => document.getElementById(id);
@@ -921,6 +964,171 @@ async function addConfig(){
   $('btnAdd').disabled=false; $('btnAdd').textContent='+ Add Configuration';
 }
 
+function setBulkMessage(kind, text){
+  const msg=$('bulkMsg');
+  if(!msg) return;
+  msg.className=kind?`form-msg ${kind}`:'form-msg';
+  msg.textContent=text||'';
+}
+
+function renderBulkPreview(items){
+  bulkPromoPreviews=items||[];
+  bulkPromoPreviewBase=$('bulkMessage')?$('bulkMessage').value.trim():'';
+  const list=$('bulkPreviewList');
+  if(!list) return;
+  const sendable=bulkPromoPreviews.filter(item=>item.content);
+  $('btnBulkSend').disabled=!sendable.length;
+  if(!bulkPromoPreviews.length){
+    list.innerHTML='';
+    return;
+  }
+  list.innerHTML=bulkPromoPreviews.map(item=>`
+    <div class="bulk-item">
+      <div class="bulk-meta">${esc(item.status||'ready')} - ${esc(item.guild_name||'Unknown server')} - #${esc(item.channel_name||item.label||item.channel_id)}</div>
+      <div class="bulk-content">${esc(item.error||item.content||'')}</div>
+    </div>
+  `).join('');
+}
+
+async function previewBulkPromo(){
+  const base=$('bulkMessage').value.trim();
+  if(!base){
+    setBulkMessage('err','Enter a promo message first.');
+    return;
+  }
+  $('btnBulkPreview').disabled=true;
+  $('btnBulkSend').disabled=true;
+  setBulkMessage('info','Generating preview...');
+  $('bulkStatus').textContent='';
+  renderBulkPreview([]);
+  try{
+    const res=await fetch('/api/bulk-promo/preview',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({base_message:base})
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Preview failed');
+    renderBulkPreview(data.previews||[]);
+    const blocked=(data.targets||[]).filter(t=>t.status!=='ready').length;
+    const ready=bulkPromoPreviews.filter(item=>item.content).length;
+    const failed=bulkPromoPreviews.filter(item=>item.error).length;
+    setBulkMessage('ok',`Preview ready for ${ready} channel${ready!==1?'s':''}${failed?`; ${failed} preview failed`:''}${blocked?`; ${blocked} skipped`:''}.`);
+  }catch(e){
+    setBulkMessage('err',e.message||'Preview failed.');
+  }
+  $('btnBulkPreview').disabled=false;
+}
+
+async function sendBulkPromo(){
+  const base=$('bulkMessage').value.trim();
+  if(!base||!bulkPromoPreviews.length){
+    setBulkMessage('err','Generate a preview first.');
+    return;
+  }
+  if(base!==bulkPromoPreviewBase){
+    setBulkMessage('err','Promo message changed after preview. Generate preview again.');
+    $('btnBulkSend').disabled=true;
+    return;
+  }
+  if(!confirm('Start sending promo messages to monitored channels?')) return;
+  $('btnBulkSend').disabled=true;
+  $('btnBulkPreview').disabled=true;
+  $('btnBulkCancel').disabled=false;
+  setBulkMessage('info','Starting send...');
+  try{
+    const res=await fetch('/api/bulk-promo/send',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        base_message:base,
+        min_delay_seconds:120,
+        max_delay_seconds:300,
+        previews:bulkPromoPreviews
+      })
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Send failed');
+    updateBulkStatus(data.job);
+    startBulkPolling();
+  }catch(e){
+    setBulkMessage('err',e.message||'Send failed.');
+    $('btnBulkPreview').disabled=false;
+    $('btnBulkCancel').disabled=true;
+  }
+}
+
+function updateBulkStatus(job){
+  if(!job){
+    $('bulkPill').textContent='Idle';
+    $('bulkStatus').textContent='';
+    $('btnBulkCancel').disabled=true;
+    return;
+  }
+  $('bulkPill').textContent=job.status||'Running';
+  $('bulkStatus').textContent=`Sent ${job.sent||0}/${job.total||0}, failed ${job.failed||0}${job.next_delay_seconds?`, next in ${job.next_delay_seconds}s`:''}`;
+  $('btnBulkCancel').disabled=job.status!=='running';
+  if(job.status==='running'){
+    setBulkMessage('info','Bulk promo send is running in the background.');
+    $('btnBulkPreview').disabled=true;
+    $('btnBulkSend').disabled=true;
+  }
+  if(job.results&&job.results.length){
+    $('bulkPreviewList').innerHTML=job.results.map(item=>`
+      <div class="bulk-item">
+        <div class="bulk-meta">${esc(item.status||'pending')} - ${esc(item.guild_name||'Unknown server')} - #${esc(item.channel_name||item.label||item.channel_id)}</div>
+        <div class="bulk-content">${esc(item.error||item.content||'')}</div>
+      </div>
+    `).join('');
+  }
+  if(['completed','failed','cancelled'].includes(job.status)){
+    setBulkMessage(job.status==='completed'?'ok':'err',`Bulk promo ${job.status}.`);
+    $('btnBulkPreview').disabled=false;
+    $('btnBulkSend').disabled=true;
+    $('btnBulkCancel').disabled=true;
+    if(bulkPromoPoll){
+      clearInterval(bulkPromoPoll);
+      bulkPromoPoll=null;
+    }
+  }
+}
+
+async function cancelBulkPromo(){
+  if(!confirm('Cancel the running bulk promo send?')) return;
+  $('btnBulkCancel').disabled=true;
+  try{
+    const data=await fetch('/api/bulk-promo/cancel',{method:'POST'}).then(r=>r.json());
+    updateBulkStatus(data.job);
+    setBulkMessage('info','Cancel requested.');
+  }catch(e){
+    setBulkMessage('err','Cancel failed.');
+  }
+}
+
+async function syncBulkPromoStatus(){
+  try{
+    const data=await fetch('/api/bulk-promo/status').then(r=>r.json());
+    updateBulkStatus(data.job);
+    if(data.running) startBulkPolling();
+  }catch(e){
+    console.error(e);
+  }
+}
+
+function startBulkPolling(){
+  if(bulkPromoPoll) clearInterval(bulkPromoPoll);
+  bulkPromoPoll=setInterval(async()=>{
+    try{
+      const data=await fetch('/api/bulk-promo/status').then(r=>r.json());
+      updateBulkStatus(data.job);
+      if(!data.running&&bulkPromoPoll){
+        clearInterval(bulkPromoPoll);
+        bulkPromoPoll=null;
+      }
+    }catch(e){console.error(e)}
+  },5000);
+}
+
 /* ── Delete config ───────────────────────────────────────────── */
 async function deleteConfig(channelId){
   if(!confirm('Remove this channel from monitoring?')) return;
@@ -979,6 +1187,7 @@ window.addEventListener('load',()=>{
       }
   });
   refresh();
+  syncBulkPromoStatus();
   setInterval(refresh,REFRESH_MS);
 });
 </script>

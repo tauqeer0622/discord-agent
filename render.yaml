@@ -20,5 +20,13 @@ services:
         sync: false
       - key: MONGODB_DB_NAME
         value: discord_agent_db
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: BULK_PROMO_ENABLED
+        value: "true"
+      - key: PROMO_MAX_CHANNELS
+        value: "100"
       - key: LOG_LEVEL
         value: INFO

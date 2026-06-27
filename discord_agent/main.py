@@ -261,6 +261,16 @@ async def _hold_web_server_for_diagnostics():
         await asyncio.sleep(3600)
 
 
+async def _watch_discord_startup(client, timeout_seconds=120):
+    await asyncio.sleep(timeout_seconds)
+    if client.is_ready() or client.discord_connect_seen_at:
+        return
+    client.discord_last_error = (
+        "Discord login is still pending; Render may be rate-limited or blocked by Discord."
+    )
+    logger.warning(client.discord_last_error)
+
+
 class CommandCenterClient(discord.Client):
     def __init__(self):
         super().__init__()
@@ -1032,6 +1042,7 @@ async def run_service():
         await client.start_web_server()
         client.web_server_started = True
         client.discord_login_started_at = _utc_now_iso()
+        asyncio.create_task(_watch_discord_startup(client))
         if DISCORD_AUTH_PROBE_ENABLED:
             client.discord_auth_probe = await _probe_discord_token(DISCORD_TOKEN)
             auth_status = client.discord_auth_probe.get("status")

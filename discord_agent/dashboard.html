@@ -313,6 +313,9 @@
     .bulk-meta{font-size:.72rem;color:var(--text3);font-weight:700;margin-bottom:.35rem}
     .bulk-content{font-size:.82rem;color:var(--text2);line-height:1.45;white-space:pre-wrap;word-break:break-word}
     .bulk-status{font-size:.76rem;color:var(--text2);line-height:1.6}
+    .bulk-file{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+    .bulk-file input{max-width:280px}
+    .bulk-file-name{font-size:.76rem;color:var(--text3);word-break:break-word}
 
     /* ── Config list ─────────────────────────────────────────────── */
     .cfg-row{display:grid;grid-template-columns:1fr auto auto auto;padding:1rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:1rem;transition:background .2s}
@@ -545,6 +548,10 @@
               <div class="form-group">
                 <label class="form-label" for="bulkMessage">Promo Message</label>
                 <textarea class="form-textarea" id="bulkMessage" placeholder="Enter the base promo message"></textarea>
+                <div class="bulk-file">
+                  <input class="form-input" id="bulkImage" type="file" accept="image/png,image/jpeg,image/gif,image/webp"/>
+                  <span class="bulk-file-name" id="bulkImageName">No image selected</span>
+                </div>
               </div>
               <div class="bulk-actions">
                 <button class="btn-add" id="btnBulkPreview" onclick="previewBulkPromo()">Preview</button>
@@ -579,6 +586,7 @@ let selectedChannelIds = new Set();
 let bulkPromoPreviews = [];
 let bulkPromoPoll = null;
 let bulkPromoPreviewBase = '';
+let bulkPromoPreviewImageSignature = '';
 
 /* ── Utils ───────────────────────────────────────────────────── */
 const $  = id => document.getElementById(id);
@@ -596,6 +604,14 @@ function fmtTime(iso){
 }
 
 /* ── Mode Toggle ─────────────────────────────────────────────── */
+function bulkImageFile(){
+  const input=$('bulkImage');
+  return input&&input.files&&input.files.length?input.files[0]:null;
+}
+function bulkImageSignature(file=bulkImageFile()){
+  return file?`${file.name}:${file.size}:${file.lastModified}`:'';
+}
+
 function setMode(m){
   mode=m; localStorage.setItem('ccMode',m);
   const uO=$('optUser'),aO=$('optAdmin'),sl=$('slider');
@@ -985,9 +1001,11 @@ function setBulkMessage(kind, text){
 function renderBulkPreview(items){
   bulkPromoPreviews=items||[];
   bulkPromoPreviewBase=$('bulkMessage')?$('bulkMessage').value.trim():'';
+  bulkPromoPreviewImageSignature=bulkImageSignature();
   const list=$('bulkPreviewList');
   if(!list) return;
-  const sendable=bulkPromoPreviews.filter(item=>item.content);
+  const hasImage=!!bulkPromoPreviewImageSignature;
+  const sendable=bulkPromoPreviews.filter(item=>!item.error&&(item.content||hasImage));
   $('btnBulkSend').disabled=!sendable.length;
   if(!bulkPromoPreviews.length){
     list.innerHTML='';
@@ -996,15 +1014,16 @@ function renderBulkPreview(items){
   list.innerHTML=bulkPromoPreviews.map(item=>`
     <div class="bulk-item">
       <div class="bulk-meta">${esc(item.status||'ready')} - ${esc(item.guild_name||'Unknown server')} - #${esc(item.channel_name||item.label||item.channel_id)}</div>
-      <div class="bulk-content">${esc(item.error||item.content||'')}</div>
+      <div class="bulk-content">${esc(item.error||item.content||(hasImage?'[image only]':''))}</div>
     </div>
   `).join('');
 }
 
 async function previewBulkPromo(){
   const base=$('bulkMessage').value.trim();
-  if(!base){
-    setBulkMessage('err','Enter a promo message first.');
+  const image=bulkImageFile();
+  if(!base&&!image){
+    setBulkMessage('err','Enter a promo message or choose an image first.');
     return;
   }
   $('btnBulkPreview').disabled=true;
@@ -1016,13 +1035,13 @@ async function previewBulkPromo(){
     const res=await fetch('/api/bulk-promo/preview',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({base_message:base})
+      body:JSON.stringify({base_message:base,image_selected:!!image})
     });
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Preview failed');
     renderBulkPreview(data.previews||[]);
     const blocked=(data.targets||[]).filter(t=>t.status!=='ready').length;
-    const ready=bulkPromoPreviews.filter(item=>item.content).length;
+    const ready=bulkPromoPreviews.filter(item=>!item.error&&(item.content||image)).length;
     const failed=bulkPromoPreviews.filter(item=>item.error).length;
     setBulkMessage('ok',`Preview ready for ${ready} channel${ready!==1?'s':''}${failed?`; ${failed} preview failed`:''}${blocked?`; ${blocked} skipped`:''}.`);
   }catch(e){
@@ -1033,12 +1052,18 @@ async function previewBulkPromo(){
 
 async function sendBulkPromo(){
   const base=$('bulkMessage').value.trim();
-  if(!base||!bulkPromoPreviews.length){
+  const image=bulkImageFile();
+  if((!base&&!image)||!bulkPromoPreviews.length){
     setBulkMessage('err','Generate a preview first.');
     return;
   }
   if(base!==bulkPromoPreviewBase){
     setBulkMessage('err','Promo message changed after preview. Generate preview again.');
+    $('btnBulkSend').disabled=true;
+    return;
+  }
+  if(bulkImageSignature(image)!==bulkPromoPreviewImageSignature){
+    setBulkMessage('err','Image changed after preview. Generate preview again.');
     $('btnBulkSend').disabled=true;
     return;
   }
@@ -1048,15 +1073,15 @@ async function sendBulkPromo(){
   $('btnBulkCancel').disabled=false;
   setBulkMessage('info','Starting send...');
   try{
+    const payload=new FormData();
+    payload.append('base_message',base);
+    payload.append('min_delay_seconds','120');
+    payload.append('max_delay_seconds','300');
+    payload.append('previews',JSON.stringify(bulkPromoPreviews));
+    if(image) payload.append('image',image);
     const res=await fetch('/api/bulk-promo/send',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        base_message:base,
-        min_delay_seconds:120,
-        max_delay_seconds:300,
-        previews:bulkPromoPreviews
-      })
+      body:payload
     });
     const data=await res.json();
     if(!res.ok) throw new Error(data.error||'Send failed');
@@ -1088,7 +1113,7 @@ function updateBulkStatus(job){
     $('bulkPreviewList').innerHTML=job.results.map(item=>`
       <div class="bulk-item">
         <div class="bulk-meta">${esc(item.status||'pending')} - ${esc(item.guild_name||'Unknown server')} - #${esc(item.channel_name||item.label||item.channel_id)}</div>
-        <div class="bulk-content">${esc(item.error||item.content||'')}</div>
+        <div class="bulk-content">${esc(item.error||item.content||(item.has_image?'[image only]':''))}</div>
       </div>
     `).join('');
   }
@@ -1195,6 +1220,21 @@ window.addEventListener('load',()=>{
   document.addEventListener('input',(e)=>{
       if(e.target.id==='messageSearch'){
           renderMessages(cache.messages);
+      }
+      if(e.target.id==='bulkImage'){
+          const file=bulkImageFile();
+          $('bulkImageName').textContent=file?`${file.name} (${Math.ceil(file.size/1024)} KB)`:'No image selected';
+          $('btnBulkSend').disabled=true;
+      }
+      if(e.target.id==='bulkMessage'){
+          $('btnBulkSend').disabled=true;
+      }
+  });
+  document.addEventListener('change',(e)=>{
+      if(e.target.id==='bulkImage'){
+          const file=bulkImageFile();
+          $('bulkImageName').textContent=file?`${file.name} (${Math.ceil(file.size/1024)} KB)`:'No image selected';
+          $('btnBulkSend').disabled=true;
       }
   });
   refresh();

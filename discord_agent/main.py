@@ -1,7 +1,9 @@
 import asyncio
+import io
 import json
 import logging
 import math
+import mimetypes
 import os
 import random
 from database import get_messages
@@ -50,6 +52,16 @@ PROMO_DEFAULT_MAX_DELAY_SECONDS = 300
 PROMO_MAX_MESSAGE_LENGTH = 1900
 BULK_PROMO_ENABLED = os.getenv("BULK_PROMO_ENABLED", "true").lower() == "true"
 DISCORD_AUTH_PROBE_ENABLED = os.getenv("DISCORD_AUTH_PROBE_ENABLED", "false").lower() == "true"
+try:
+    PROMO_MAX_IMAGE_BYTES = max(1, int(os.getenv("PROMO_MAX_IMAGE_MB", "8"))) * 1024 * 1024
+except ValueError:
+    PROMO_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+PROMO_ALLOWED_IMAGE_TYPES = {
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v9"
 DISCORD_TEXT_CHANNEL_TYPE = 0
@@ -564,12 +576,61 @@ class CommandCenterClient(discord.Client):
             return min(parsed, maximum)
         return parsed
 
-    def _validate_bulk_message(self, base_message):
+    def _validate_bulk_message(self, base_message, allow_empty=False):
+        if not base_message:
+            return None if allow_empty else "Promo message or image is required"
         if len(base_message) < 5:
-            return "Promo message is required"
+            return "Promo message must be at least 5 characters"
         if len(base_message) > PROMO_MAX_MESSAGE_LENGTH:
             return f"Promo message must be under {PROMO_MAX_MESSAGE_LENGTH} characters"
         return None
+
+    def _validate_bulk_image(self, image_payload):
+        if not image_payload:
+            return None
+        content_type = image_payload.get("content_type") or ""
+        if content_type not in PROMO_ALLOWED_IMAGE_TYPES:
+            return "Image must be PNG, JPEG, GIF, or WEBP"
+        size = len(image_payload.get("data") or b"")
+        if size <= 0:
+            return "Selected image is empty"
+        if size > PROMO_MAX_IMAGE_BYTES:
+            max_mb = PROMO_MAX_IMAGE_BYTES // (1024 * 1024)
+            return f"Image must be {max_mb} MB or smaller"
+        return None
+
+    async def _read_bulk_promo_send_data(self, request):
+        if not request.content_type.startswith("multipart/"):
+            return await request.json(), None
+
+        data = {}
+        image_payload = None
+        reader = await request.multipart()
+        async for part in reader:
+            if part.name == "image" and part.filename:
+                filename = os.path.basename(part.filename) or "promo-image"
+                content_type = (
+                    part.headers.get("Content-Type", "")
+                    or mimetypes.guess_type(filename)[0]
+                    or ""
+                )
+                image_payload = {
+                    "filename": filename,
+                    "content_type": content_type,
+                    "data": await part.read(decode=False),
+                }
+                continue
+
+            value = await part.text()
+            if part.name == "previews":
+                try:
+                    data["previews"] = json.loads(value)
+                except json.JSONDecodeError:
+                    data["previews"] = []
+            else:
+                data[part.name] = value
+
+        return data, image_payload
 
     def _public_bulk_target(self, target):
         return {
@@ -624,7 +685,11 @@ class CommandCenterClient(discord.Client):
 
             data = await request.json()
             base_message = str(data.get("base_message", "")).strip()
-            validation_error = self._validate_bulk_message(base_message)
+            image_selected = bool(data.get("image_selected"))
+            validation_error = self._validate_bulk_message(
+                base_message,
+                allow_empty=image_selected,
+            )
             if validation_error:
                 return web.json_response(
                     {"error": validation_error},
@@ -639,7 +704,18 @@ class CommandCenterClient(discord.Client):
                 data.get("channel_ids"),
                 max_channels=max_channels,
             )
-            previews = await self._build_bulk_promo_variants(base_message, targets)
+            if base_message:
+                previews = await self._build_bulk_promo_variants(base_message, targets)
+            else:
+                previews = [
+                    {
+                        **self._public_bulk_target(target),
+                        "content": "",
+                        "image_only": True,
+                    }
+                    for target in targets
+                    if target.get("status") == "ready"
+                ]
             return web.json_response(
                 {
                     "targets": [self._public_bulk_target(target) for target in targets],
@@ -665,9 +741,19 @@ class CommandCenterClient(discord.Client):
                     status=409, headers=CORS_HEADERS,
                 )
 
-            data = await request.json()
+            data, image_payload = await self._read_bulk_promo_send_data(request)
+            image_validation_error = self._validate_bulk_image(image_payload)
+            if image_validation_error:
+                return web.json_response(
+                    {"error": image_validation_error},
+                    status=400, headers=CORS_HEADERS,
+                )
+
             base_message = str(data.get("base_message", "")).strip()
-            validation_error = self._validate_bulk_message(base_message)
+            validation_error = self._validate_bulk_message(
+                base_message,
+                allow_empty=bool(image_payload),
+            )
             if validation_error:
                 return web.json_response(
                     {"error": validation_error},
@@ -693,15 +779,16 @@ class CommandCenterClient(discord.Client):
             if max_delay < min_delay:
                 max_delay = min_delay
 
-            preview_content = {
-                str(item.get("channel_id")): str(item.get("content", "")).strip()
-                for item in data.get("previews", [])
-                if (
-                    item.get("channel_id")
-                    and str(item.get("content", "")).strip()
-                    and len(str(item.get("content", "")).strip()) <= PROMO_MAX_MESSAGE_LENGTH
-                )
-            }
+            preview_content = {}
+            for item in data.get("previews", []):
+                channel_id = item.get("channel_id")
+                content = str(item.get("content", "")).strip()
+                if not channel_id:
+                    continue
+                if len(content) > PROMO_MAX_MESSAGE_LENGTH:
+                    continue
+                if content or image_payload:
+                    preview_content[str(channel_id)] = content
             if not preview_content:
                 return web.json_response(
                     {"error": "Preview is required before sending"},
@@ -733,6 +820,8 @@ class CommandCenterClient(discord.Client):
                 "total": len(ready_targets),
                 "sent": 0,
                 "failed": 0,
+                "has_image": bool(image_payload),
+                "image_filename": image_payload.get("filename") if image_payload else None,
                 "results": [],
                 "current_channel_id": None,
                 "next_send_at": None,
@@ -742,6 +831,7 @@ class CommandCenterClient(discord.Client):
                     base_message,
                     ready_targets,
                     preview_content,
+                    image_payload,
                     min_delay,
                     max_delay,
                 )
@@ -777,6 +867,7 @@ class CommandCenterClient(discord.Client):
         base_message,
         targets,
         preview_content,
+        image_payload,
         min_delay,
         max_delay,
     ):
@@ -786,7 +877,7 @@ class CommandCenterClient(discord.Client):
                 self.bulk_promo_job["current_channel_id"] = str(target["channel_id"])
                 try:
                     content = preview_content.get(str(target["channel_id"]))
-                    if not content:
+                    if not content and base_message:
                         content = await generate_promo_variant(
                             base_message,
                             target,
@@ -794,11 +885,22 @@ class CommandCenterClient(discord.Client):
                             len(targets),
                         )
                     if not content or len(content) > PROMO_MAX_MESSAGE_LENGTH:
-                        raise RuntimeError("Promo message was empty or too long")
+                        if not image_payload:
+                            raise RuntimeError("Promo message was empty or too long")
 
-                    await target["_channel"].send(content)
+                    file = None
+                    if image_payload:
+                        file = discord.File(
+                            io.BytesIO(image_payload["data"]),
+                            filename=image_payload["filename"],
+                        )
+                    send_kwargs = {"file": file} if file else {}
+                    await target["_channel"].send(content or None, **send_kwargs)
                     result["status"] = "sent"
                     result["content"] = content
+                    result["has_image"] = bool(image_payload)
+                    if image_payload:
+                        result["image_filename"] = image_payload["filename"]
                     result["sent_at"] = datetime.now(timezone.utc).isoformat()
                     self.bulk_promo_job["sent"] += 1
                 except Exception as e:

@@ -625,8 +625,19 @@ function setTab(t){
 /* ── Status pill ─────────────────────────────────────────────── */
 function renderStatus(s){
   const pill=$('statusPill'),txt=$('statusTxt');
-  if(s&&s.online){pill.className='';txt.textContent=s.bot_name||'Online'}
-  else{pill.className='offline';txt.textContent='Offline'}
+  if(s&&s.online){
+    pill.className='';
+    txt.textContent=s.bot_name||'Online';
+    pill.title='';
+  }else{
+    const d=(s&&s.discord)||{};
+    const probe=d.auth_probe||{};
+    pill.className='offline';
+    txt.textContent=d.last_error&&String(d.last_error).includes('HTTP 401')
+      ? 'Token rejected'
+      : (probe.ok ? 'Connecting...' : 'Offline');
+    pill.title=d.last_error||(probe.status?`Discord token check HTTP ${probe.status}`:'Discord is not ready yet');
+  }
 }
 
 /* ── Stats ───────────────────────────────────────────────────── */

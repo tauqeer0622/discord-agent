@@ -16,13 +16,20 @@ logging.basicConfig(
 )
 
 # Core Settings
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+def _clean_env_value(name):
+    value = os.getenv(name)
+    if value is None:
+        return None
+    return value.strip().strip('"').strip("'")
+
+
+DISCORD_TOKEN = _clean_env_value("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     logging.error("DISCORD_TOKEN is missing in environment variables.")
 
 CONTROL_SERVER_ID = int(os.getenv("CONTROL_SERVER_ID", "0"))
 CONTROL_CHANNEL_ID = int(os.getenv("CONTROL_CHANNEL_ID", "0"))
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = _clean_env_value("OPENAI_API_KEY")
 
 if not CONTROL_SERVER_ID or not CONTROL_CHANNEL_ID:
     logging.error("CONTROL_SERVER_ID or CONTROL_CHANNEL_ID is missing.")

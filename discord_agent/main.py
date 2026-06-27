@@ -216,6 +216,49 @@ def _raw_channel_is_addable(channel_data, category_by_id, guild, user):
     )
 
 
+def _utc_now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _probe_discord_token(token):
+    result = {
+        "ok": False,
+        "status": None,
+        "checked_at": _utc_now_iso(),
+        "error": None,
+    }
+    headers = {
+        "Authorization": token,
+        "User-Agent": "Mozilla/5.0",
+    }
+    url = f"{DISCORD_API_BASE_URL}/users/@me"
+
+    try:
+        async with ClientSession(headers=headers) as session:
+            async with session.get(url) as response:
+                result["status"] = response.status
+                if response.status >= 400:
+                    text = await response.text()
+                    result["error"] = text[:200]
+                    return result
+
+                data = await response.json()
+                result.update({
+                    "ok": True,
+                    "user_id": str(data.get("id") or ""),
+                    "username": data.get("username"),
+                })
+                return result
+    except Exception as exc:
+        result["error"] = str(exc)[:200]
+        return result
+
+
+async def _hold_web_server_for_diagnostics():
+    while True:
+        await asyncio.sleep(3600)
+
+
 class CommandCenterClient(discord.Client):
     def __init__(self):
         super().__init__()
@@ -226,6 +269,12 @@ class CommandCenterClient(discord.Client):
         self.start_time = datetime.now(timezone.utc)
         self.bulk_promo_job = None
         self.bulk_promo_task = None
+        self.discord_login_started_at = None
+        self.discord_ready_at = None
+        self.discord_connect_seen_at = None
+        self.discord_disconnect_seen_at = None
+        self.discord_last_error = None
+        self.discord_auth_probe = None
 
     # ── Web Server ─────────────────────────────────────────────
 
@@ -283,6 +332,10 @@ class CommandCenterClient(discord.Client):
     async def handle_get_status(self, request):
         """Return bot connection status and basic info."""
         uptime = (datetime.now(timezone.utc) - self.start_time).total_seconds()
+        latency = getattr(self, "latency", None)
+        latency_ms = None
+        if latency is not None and latency != float("inf"):
+            latency_ms = int(latency * 1000)
         data = {
             "online": self.is_ready(),
             "bot_name": f"{self.user.name}#{self.user.discriminator}" if self.is_ready() else None,
@@ -290,6 +343,17 @@ class CommandCenterClient(discord.Client):
             "guild_count": len(self.guilds),
             "uptime_seconds": int(uptime),
             "start_time": self.start_time.isoformat(),
+            "discord": {
+                "ready": self.is_ready(),
+                "closed": self.is_closed(),
+                "latency_ms": latency_ms,
+                "login_started_at": self.discord_login_started_at,
+                "ready_at": self.discord_ready_at,
+                "connect_seen_at": self.discord_connect_seen_at,
+                "disconnect_seen_at": self.discord_disconnect_seen_at,
+                "last_error": self.discord_last_error,
+                "auth_probe": self.discord_auth_probe,
+            },
         }
         return web.json_response(data, headers=CORS_HEADERS)
 
@@ -887,7 +951,20 @@ class CommandCenterClient(discord.Client):
 
     # ── Discord Events ─────────────────────────────────────────
 
+    async def on_connect(self):
+        self.discord_connect_seen_at = _utc_now_iso()
+        self.discord_last_error = None
+        logger.info("Discord gateway connected.")
+
+    async def on_disconnect(self):
+        self.discord_disconnect_seen_at = _utc_now_iso()
+        if not self.is_ready():
+            self.discord_last_error = "Discord gateway disconnected before ready."
+        logger.warning("Discord gateway disconnected.")
+
     async def on_ready(self):
+        self.discord_ready_at = _utc_now_iso()
+        self.discord_last_error = None
         logger.info(f"Logged in as {self.user.name}#{self.user.discriminator} (ID: {self.user.id})")
         logger.info("Command Center Prototype is active and monitoring...")
 
@@ -952,10 +1029,21 @@ async def run_service():
     try:
         await client.start_web_server()
         client.web_server_started = True
+        client.discord_login_started_at = _utc_now_iso()
+        client.discord_auth_probe = await _probe_discord_token(DISCORD_TOKEN)
+        if not client.discord_auth_probe.get("ok"):
+            status = client.discord_auth_probe.get("status")
+            client.discord_last_error = f"Discord token check failed with HTTP {status}."
+            logger.error("%s", client.discord_last_error)
+            await _hold_web_server_for_diagnostics()
+
         await client.start(DISCORD_TOKEN)
-    except discord.errors.LoginFailure:
-        logger.error("Improper token has been passed. Check your DISCORD_TOKEN.")
+    except discord.errors.LoginFailure as e:
+        client.discord_last_error = "Discord login failed. Check DISCORD_TOKEN."
+        logger.error("%s %s", client.discord_last_error, e)
+        await _hold_web_server_for_diagnostics()
     except Exception as e:
+        client.discord_last_error = str(e)[:200]
         logger.error(f"Critical error: {e}")
     finally:
         if not client.is_closed():

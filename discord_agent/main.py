@@ -49,6 +49,7 @@ PROMO_DEFAULT_MIN_DELAY_SECONDS = 120
 PROMO_DEFAULT_MAX_DELAY_SECONDS = 300
 PROMO_MAX_MESSAGE_LENGTH = 1900
 BULK_PROMO_ENABLED = os.getenv("BULK_PROMO_ENABLED", "true").lower() == "true"
+DISCORD_AUTH_PROBE_ENABLED = os.getenv("DISCORD_AUTH_PROBE_ENABLED", "false").lower() == "true"
 
 DISCORD_API_BASE_URL = "https://discord.com/api/v9"
 DISCORD_TEXT_CHANNEL_TYPE = 0
@@ -1031,18 +1032,26 @@ async def run_service():
         await client.start_web_server()
         client.web_server_started = True
         client.discord_login_started_at = _utc_now_iso()
-        client.discord_auth_probe = await _probe_discord_token(DISCORD_TOKEN)
-        auth_status = client.discord_auth_probe.get("status")
-        if not client.discord_auth_probe.get("ok") and auth_status in (401, 403):
-            status = client.discord_auth_probe.get("status")
-            client.discord_last_error = f"Discord token check failed with HTTP {status}."
-            logger.error("%s", client.discord_last_error)
-            await _hold_web_server_for_diagnostics()
-        elif not client.discord_auth_probe.get("ok"):
-            logger.warning(
-                "Discord token check was inconclusive with HTTP %s; continuing gateway login.",
-                auth_status,
-            )
+        if DISCORD_AUTH_PROBE_ENABLED:
+            client.discord_auth_probe = await _probe_discord_token(DISCORD_TOKEN)
+            auth_status = client.discord_auth_probe.get("status")
+            if not client.discord_auth_probe.get("ok") and auth_status in (401, 403):
+                status = client.discord_auth_probe.get("status")
+                client.discord_last_error = f"Discord token check failed with HTTP {status}."
+                logger.error("%s", client.discord_last_error)
+                await _hold_web_server_for_diagnostics()
+            elif not client.discord_auth_probe.get("ok"):
+                logger.warning(
+                    "Discord token check was inconclusive with HTTP %s; continuing gateway login.",
+                    auth_status,
+                )
+        else:
+            client.discord_auth_probe = {
+                "ok": None,
+                "status": None,
+                "checked_at": None,
+                "skipped": True,
+            }
 
         await client.start(DISCORD_TOKEN)
     except discord.errors.LoginFailure as e:

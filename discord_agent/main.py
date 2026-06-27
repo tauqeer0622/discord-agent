@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import random
 from database import get_messages
@@ -334,7 +335,7 @@ class CommandCenterClient(discord.Client):
         uptime = (datetime.now(timezone.utc) - self.start_time).total_seconds()
         latency = getattr(self, "latency", None)
         latency_ms = None
-        if latency is not None and latency != float("inf"):
+        if latency is not None and math.isfinite(latency):
             latency_ms = int(latency * 1000)
         data = {
             "online": self.is_ready(),

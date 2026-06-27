@@ -1032,11 +1032,17 @@ async def run_service():
         client.web_server_started = True
         client.discord_login_started_at = _utc_now_iso()
         client.discord_auth_probe = await _probe_discord_token(DISCORD_TOKEN)
-        if not client.discord_auth_probe.get("ok"):
+        auth_status = client.discord_auth_probe.get("status")
+        if not client.discord_auth_probe.get("ok") and auth_status in (401, 403):
             status = client.discord_auth_probe.get("status")
             client.discord_last_error = f"Discord token check failed with HTTP {status}."
             logger.error("%s", client.discord_last_error)
             await _hold_web_server_for_diagnostics()
+        elif not client.discord_auth_probe.get("ok"):
+            logger.warning(
+                "Discord token check was inconclusive with HTTP %s; continuing gateway login.",
+                auth_status,
+            )
 
         await client.start(DISCORD_TOKEN)
     except discord.errors.LoginFailure as e:

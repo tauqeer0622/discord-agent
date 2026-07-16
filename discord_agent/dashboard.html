@@ -182,6 +182,50 @@
   font-weight:700;
 }
 
+.reply-box{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+
+.reply-input{
+  width:100%;
+  min-height:72px;
+  resize:vertical;
+  padding:8px 10px;
+  border-radius:8px;
+  background:rgba(255,255,255,.05);
+  border:1px solid var(--border);
+  color:var(--text);
+  font-family:'Inter',sans-serif;
+  font-size:.78rem;
+  line-height:1.4;
+  outline:none;
+}
+
+.reply-input:focus{
+  border-color:var(--purple);
+  background:rgba(124,58,237,.07);
+}
+
+.reply-send{
+  width:max-content;
+  min-width:74px;
+  padding:7px 11px;
+  border-radius:8px;
+  border:1px solid rgba(124,58,237,.32);
+  background:rgba(124,58,237,.18);
+  color:var(--purple-l);
+  font-weight:800;
+  font-size:.73rem;
+  cursor:pointer;
+}
+
+.reply-send:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+
 .source-link{
   display:inline-flex;
   margin-top:7px;
@@ -587,6 +631,7 @@ let bulkPromoPreviews = [];
 let bulkPromoPoll = null;
 let bulkPromoPreviewBase = '';
 let bulkPromoPreviewImageSignature = '';
+let replyDrafts = {};
 
 /* ── Utils ───────────────────────────────────────────────────── */
 const $  = id => document.getElementById(id);
@@ -607,6 +652,11 @@ function fmtTime(iso){
 function bulkImageFile(){
   const input=$('bulkImage');
   return input&&input.files&&input.files.length?input.files[0]:null;
+}
+function hasActiveReplyDraft(){
+  const focused = document.activeElement && document.activeElement.classList.contains('reply-input');
+  if(focused) return true;
+  return Object.values(replyDrafts).some(value => String(value||'').trim());
 }
 function bulkImageSignature(file=bulkImageFile()){
   return file?`${file.name}:${file.size}:${file.lastModified}`:'';
@@ -695,6 +745,22 @@ function renderMessages(msgs){
       return;
   }
 
+  document.querySelectorAll('.reply-input').forEach(input=>{
+      const messageId = input.dataset.messageId;
+      if(messageId) replyDrafts[messageId] = input.value;
+  });
+  const focusedReplyId =
+      document.activeElement && document.activeElement.classList.contains('reply-input')
+      ? document.activeElement.dataset.messageId
+      : null;
+  const focusedSelection =
+      focusedReplyId && document.activeElement
+      ? {
+          start: document.activeElement.selectionStart,
+          end: document.activeElement.selectionEnd
+        }
+      : null;
+
   $('msgBody').innerHTML = msgs.map((m,index)=>{
       const av =
           (m.author || '?')
@@ -708,7 +774,13 @@ function renderMessages(msgs){
 
       const replyHtml = m.reply
           ? `<div class="reply-content" title="${esc(m.reply)}">${esc(m.reply)}</div>`
-          : '<span class="reply-empty">Not replied</span>';
+          : `
+            <div class="reply-box">
+              <span class="reply-empty" id="replyStatus-${esc(m.id)}">Not replied</span>
+              <textarea class="reply-input" id="replyInput-${esc(m.id)}" data-message-id="${esc(m.id)}" placeholder="Type manual reply...">${esc(replyDrafts[m.id]||'')}</textarea>
+              <button class="reply-send" id="replyBtn-${esc(m.id)}" onclick="sendManualReply('${esc(m.id)}')">Send</button>
+            </div>
+          `;
       const sourceHtml = m.source_url
           ? `<a class="source-link" href="${esc(m.source_url)}" target="_blank" rel="noopener noreferrer">Go to source</a>`
           : '';
@@ -752,6 +824,35 @@ function renderMessages(msgs){
 }
 
 /* ── Sidebar channels ────────────────────────────────────────── */
+async function sendManualReply(messageId){
+  const input=$(`replyInput-${messageId}`);
+  const btn=$(`replyBtn-${messageId}`);
+  const status=$(`replyStatus-${messageId}`);
+  const reply=(input&&input.value?input.value:'').trim();
+  if(!reply){
+    if(status) status.textContent='Type a reply first';
+    return;
+  }
+  if(btn) btn.disabled=true;
+  if(status) status.textContent='Sending...';
+  try{
+    const res=await fetch(`/api/messages/${messageId}/reply`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reply})
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Reply failed');
+    delete replyDrafts[messageId];
+    if(status) status.textContent='Sent';
+    if(input) input.disabled=true;
+    await refresh();
+  }catch(e){
+    if(status) status.textContent=e.message||'Reply failed';
+    if(btn) btn.disabled=false;
+  }
+}
+
 function renderChannels(cfgs){
   const active=cfgs.filter(c=>c.active!==false);
   $('chPill').textContent=active.length;
@@ -1202,7 +1303,9 @@ async function refresh(){
 
     renderStatus(status);
     renderStats(messages);
-    renderMessages(messages);
+    if(!hasActiveReplyDraft()){
+      renderMessages(messages);
+    }
     renderChannels(configs);
     renderMemory(memory);
     renderConfigTab(configs);
@@ -1220,6 +1323,10 @@ window.addEventListener('load',()=>{
   document.addEventListener('input',(e)=>{
       if(e.target.id==='messageSearch'){
           renderMessages(cache.messages);
+      }
+      if(e.target.classList&&e.target.classList.contains('reply-input')){
+          const messageId=e.target.dataset.messageId;
+          if(messageId) replyDrafts[messageId]=e.target.value;
       }
       if(e.target.id==='bulkImage'){
           const file=bulkImageFile();

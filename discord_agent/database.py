@@ -7,6 +7,7 @@ from threading import Lock
 import certifi
 from dotenv import load_dotenv
 from pymongo import ASCENDING, DESCENDING, MongoClient
+from bson import ObjectId
 
 load_dotenv()
 
@@ -323,6 +324,32 @@ def save_reply_for_latest_message(channel_id, reply_content, replied_at=None):
         },
     )
     return True
+
+
+def get_message_by_id(message_id):
+    try:
+        object_id = ObjectId(str(message_id))
+    except Exception:
+        return None
+    return get_collection("discord_messages").find_one({"_id": object_id})
+
+
+def save_reply_for_message(message_id, reply_content, replied_at=None):
+    try:
+        object_id = ObjectId(str(message_id))
+    except Exception:
+        return False
+
+    result = get_collection("discord_messages").update_one(
+        {"_id": object_id},
+        {
+            "$set": {
+                "reply_content": reply_content,
+                "reply_timestamp": _as_utc_datetime(replied_at),
+            }
+        },
+    )
+    return result.matched_count > 0
 
 
 def get_messages():

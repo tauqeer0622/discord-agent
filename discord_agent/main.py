@@ -6,7 +6,13 @@ import math
 import mimetypes
 import os
 import random
-from database import get_messages
+from database import (
+    acquire_reply_slot,
+    get_message_by_id,
+    get_messages,
+    release_reply_slot,
+    save_reply_for_message,
+)
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -23,6 +29,7 @@ from message_listener import process_message
 from promo_sender import generate_promo_variant
 from state_manager import state
 from thread_manager import thread_cleanup_loop
+from typing_simulator import simulate_typing_and_send
 
 from database import initialize_database
 
@@ -310,6 +317,7 @@ class CommandCenterClient(discord.Client):
             # Status & data reads
             web.get("/api/status",                        self.handle_get_status),
             web.get("/api/messages",                      self.handle_get_messages),
+            web.post("/api/messages/{message_id}/reply",  self.handle_post_message_reply),
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
             web.get("/api/guilds",                        self.handle_get_guilds),
@@ -415,6 +423,97 @@ class CommandCenterClient(discord.Client):
             data,
             headers=CORS_HEADERS
         )
+
+    async def handle_post_message_reply(self, request):
+        try:
+            message_id = request.match_info["message_id"]
+            data = await request.json()
+            reply_content = str(data.get("reply", "")).strip()
+            if not reply_content:
+                return web.json_response(
+                    {"error": "Reply message is required"},
+                    status=400, headers=CORS_HEADERS,
+                )
+            if len(reply_content) > PROMO_MAX_MESSAGE_LENGTH:
+                return web.json_response(
+                    {"error": f"Reply must be under {PROMO_MAX_MESSAGE_LENGTH} characters"},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            stored_message = get_message_by_id(message_id)
+            if not stored_message:
+                return web.json_response(
+                    {"error": "Message not found"},
+                    status=404, headers=CORS_HEADERS,
+                )
+            if stored_message.get("reply_content"):
+                return web.json_response(
+                    {"error": "This message is already replied"},
+                    status=409, headers=CORS_HEADERS,
+                )
+
+            channel_id = stored_message.get("channel_id")
+            if not channel_id:
+                return web.json_response(
+                    {"error": "Source channel is missing for this message"},
+                    status=400, headers=CORS_HEADERS,
+                )
+            if int(channel_id) not in config_manager.get_active_channel_ids():
+                return web.json_response(
+                    {"error": "Source channel is no longer monitored"},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            source_channel = self.get_channel(int(channel_id))
+            if source_channel is None:
+                try:
+                    source_channel = await self.fetch_channel(int(channel_id))
+                except (discord.NotFound, discord.Forbidden):
+                    source_channel = None
+            if source_channel is None:
+                return web.json_response(
+                    {"error": "Source channel is unavailable"},
+                    status=400, headers=CORS_HEADERS,
+                )
+            if is_restricted_text_channel(source_channel, self.user):
+                return web.json_response(
+                    {"error": "Source channel is locked/private or cannot be posted in"},
+                    status=403, headers=CORS_HEADERS,
+                )
+
+            reply_slot = acquire_reply_slot()
+            if not reply_slot:
+                return web.json_response(
+                    {"error": "Global Discord reply limit reached"},
+                    status=429, headers=CORS_HEADERS,
+                )
+
+            sent = await simulate_typing_and_send(source_channel, reply_content)
+            if not sent:
+                release_reply_slot(reply_slot)
+                return web.json_response(
+                    {"error": "Reply failed to send to the source channel"},
+                    status=500, headers=CORS_HEADERS,
+                )
+
+            replied_at = datetime.now(timezone.utc)
+            save_reply_for_message(message_id, reply_content, replied_at)
+            logger.info(
+                "Dashboard reply sent for message %s to channel %s",
+                message_id,
+                channel_id,
+            )
+            return web.json_response(
+                {
+                    "success": True,
+                    "reply": reply_content,
+                    "reply_timestamp": replied_at.isoformat(),
+                },
+                headers=CORS_HEADERS,
+            )
+        except Exception as e:
+            logger.error("dashboard reply error: %s", e)
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
 
     async def handle_get_configs(self, request):
         """Return all configured target channels from config_manager."""

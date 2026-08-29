@@ -596,8 +596,8 @@
     .status-chip.completed{background:rgba(124,58,237,.15);color:var(--purple-l);border:1px solid rgba(124,58,237,.3)}
 
     /* ── Auth Lock Screen ───────────────────────────────────────── */
-    #authOverlay{position:fixed;inset:0;background:rgba(6,8,15,.96);backdrop-filter:blur(16px);z-index:99999;display:none;align-items:center;justify-content:center;padding:1.5rem}
-    #authOverlay.locked{display:flex}
+    #authOverlay{position:fixed;inset:0;background:rgba(6,8,15,.96);backdrop-filter:blur(16px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+    #authOverlay.hidden{display:none!important}
     .auth-card{width:100%;max-width:440px;background:#0d111c;border:1px solid rgba(124,58,237,.35);box-shadow:0 24px 80px rgba(0,0,0,.8),0 0 40px rgba(124,58,237,.15);border-radius:20px;padding:2.5rem 2rem;display:flex;flex-direction:column;align-items:center;text-align:center;gap:1.25rem;animation:modalPop .3s ease-out}
     .auth-logo-mark{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,var(--purple),var(--blue-l));display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 8px 24px rgba(124,58,237,.4)}
     .auth-title{font-size:1.4rem;font-weight:800;color:var(--text);letter-spacing:-.02em}
@@ -1136,6 +1136,10 @@
 </div>
 
 <script>
+/* ── Global Helpers ─────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
 /* ── Auth Interceptor & Session ──────────────────────────────── */
 let authToken = localStorage.getItem('ccAuthToken') || '';
 
@@ -1174,7 +1178,7 @@ function lockDashboard(msg = '') {
   const overlay = $('authOverlay');
   const errEl = $('authErrorMsg');
   const btnLogout = $('btnLogout');
-  if (overlay) overlay.classList.add('locked');
+  if (overlay) overlay.classList.remove('hidden');
   if (btnLogout) btnLogout.style.display = 'none';
   if (errEl && msg) {
     errEl.className = 'form-msg err';
@@ -1192,7 +1196,7 @@ function unlockDashboard(token) {
   localStorage.setItem('ccAuthToken', token);
   const overlay = $('authOverlay');
   const btnLogout = $('btnLogout');
-  if (overlay) overlay.classList.remove('locked');
+  if (overlay) overlay.classList.add('hidden');
   if (btnLogout) btnLogout.style.display = 'block';
   const errEl = $('authErrorMsg');
   if (errEl) errEl.textContent = '';
@@ -1270,10 +1274,6 @@ let bulkPromoChannelSelectionTouched = false;
 let replyDrafts = {};
 const BULK_PAGE_SIZE = 12;
 let bulkCurrentPage = 0;   // zero-based
-
-/* ── Utils ───────────────────────────────────────────────────── */
-const $  = id => document.getElementById(id);
-const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 function fmtUptime(sec){
   if(sec<60)   return `${sec}s`;
@@ -2805,16 +2805,28 @@ async function controlCampaign(action){
 }
 
 /* ── Boot ────────────────────────────────────────────────────── */
-window.addEventListener('load',()=>{
+window.addEventListener('load', async () => {
   setMode(mode);
   setTab(tab);
   
   if(!authToken){
     lockDashboard();
   } else {
-    unlockDashboard(authToken);
-    refresh();
-    syncBulkPromoStatus();
+    try{
+      const res = await _originalFetch('/api/auth/check', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if(data && data.authenticated){
+        unlockDashboard(authToken);
+        refresh();
+        syncBulkPromoStatus();
+      } else {
+        lockDashboard('Please enter admin password to log in.');
+      }
+    }catch(e){
+      lockDashboard();
+    }
   }
 
   document.addEventListener('input',(e)=>{

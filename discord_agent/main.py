@@ -1331,14 +1331,78 @@ class CommandCenterClient(discord.Client):
                 elif guild.text_channels:
                     default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
-                # 1. Gateway chunking (requests members from gateway cache)
+                # 1. Subscribe to the server and scrape all members over Gateway (sidebar scraper)
                 try:
-                    if not getattr(guild, "chunked", False):
-                        await asyncio.wait_for(guild.chunk(cache=True), timeout=4.0)
-                except Exception as exc:
-                    logger.debug("Gateway chunking for %s: %s", guild.name, exc)
+                    await guild.subscribe()
+                except Exception:
+                    pass
 
-                # Upsert all members currently in memory
+                try:
+                    # fetch_members with force_scraping=True downloads all members from the whole server
+                    scraped_members = await asyncio.wait_for(
+                        guild.fetch_members(cache=True, force_scraping=True, delay=0.05),
+                        timeout=25.0
+                    )
+                    if scraped_members:
+                        batch = []
+                        for member in scraped_members:
+                            display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                            roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                            avatar_url = str(member.avatar.url) if member.avatar else None
+                            batch.append({
+                                "user_id": str(member.id),
+                                "username": member.name,
+                                "display_name": display_name,
+                                "server_nickname": member.nick or display_name,
+                                "server_name": guild.name,
+                                "channel_name": default_channel_str,
+                                "assigned_roles": roles,
+                                "is_bot": bool(member.bot),
+                                "presence_status": str(getattr(member, "status", "offline")),
+                                "avatar_url": avatar_url,
+                                "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                            })
+                        if batch:
+                            bulk_upsert_users(batch)
+                except Exception as exc:
+                    logger.debug("Gateway fetch_members for %s: %s", guild.name, exc)
+
+                # 2. Gateway query_members across character ranges for the entire server
+                try:
+                    for char in list("abcdefghijklmnopqrstuvwxyz0123456789_"):
+                        try:
+                            matched = await asyncio.wait_for(
+                                guild.query_members(query=char, limit=100, cache=True),
+                                timeout=3.0
+                            )
+                            if matched:
+                                batch = []
+                                for member in matched:
+                                    display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                                    roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                                    avatar_url = str(member.avatar.url) if member.avatar else None
+                                    batch.append({
+                                        "user_id": str(member.id),
+                                        "username": member.name,
+                                        "display_name": display_name,
+                                        "server_nickname": member.nick or display_name,
+                                        "server_name": guild.name,
+                                        "channel_name": default_channel_str,
+                                        "assigned_roles": roles,
+                                        "is_bot": bool(member.bot),
+                                        "presence_status": str(getattr(member, "status", "offline")),
+                                        "avatar_url": avatar_url,
+                                        "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                                    })
+                                if batch:
+                                    bulk_upsert_users(batch)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.04)
+                except Exception as q_err:
+                    logger.debug("Gateway query_members for %s: %s", guild.name, q_err)
+
+                # Upsert all members currently in memory/gateway
                 cached_members = list(guild.members)
                 if cached_members:
                     batch = []

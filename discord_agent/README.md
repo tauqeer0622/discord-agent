@@ -42,6 +42,10 @@ The included `render.yaml` creates a Render web service:
 2. In Render, create a new Blueprint and select the repository.
 3. Set `DISCORD_TOKEN`, `CONTROL_SERVER_ID`, `CONTROL_CHANNEL_ID`, and
    `MONGODB_URI` when Render prompts for secret environment variables.
+   Generated images show `https://www.spikesignals.com/` in the footer by
+   default. You can override it with `MARKET_IMAGE_COMPANY_WEBADDRESS` and
+   `MARKET_IMAGE_BRAND_NAME`. The Render build installs Playwright's Chromium
+   browser so the HTML/CSS template can be rendered to PNG.
 4. Deploy and open `https://<service-name>.onrender.com/api/status` to check
    the service.
 

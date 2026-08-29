@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     rootDir: discord_agent
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
     startCommand: python main.py
     healthCheckPath: /api/status
     envVars:
@@ -28,5 +28,9 @@ services:
         value: "true"
       - key: PROMO_MAX_CHANNELS
         value: "100"
+      - key: MARKET_IMAGE_COMPANY_WEBADDRESS
+        value: https://www.spikesignals.com/
+      - key: MARKET_IMAGE_BRAND_NAME
+        value: https://www.spikesignals.com/
       - key: LOG_LEVEL
         value: INFO

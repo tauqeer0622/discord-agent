@@ -6,7 +6,7 @@ from threading import Lock
 
 import certifi
 from dotenv import load_dotenv
-from pymongo import ASCENDING, DESCENDING, MongoClient
+from pymongo import ASCENDING, DESCENDING, MongoClient, UpdateOne
 from bson import ObjectId
 
 load_dotenv()
@@ -71,6 +71,28 @@ def initialize_database():
     )
     database.channel_threads.create_index(
         [("last_activity", ASCENDING)]
+    )
+    database.discord_users.create_index(
+        [("user_id", ASCENDING)],
+        unique=True,
+    )
+    database.discord_users.create_index(
+        [("username", ASCENDING)]
+    )
+    database.discord_users.create_index(
+        [("display_name", ASCENDING)]
+    )
+    database.discord_users.create_index(
+        [("servers", ASCENDING)]
+    )
+    database.discord_users.create_index(
+        [("last_seen_at", DESCENDING)]
+    )
+    database.discord_users.create_index(
+        [("is_bot", ASCENDING)]
+    )
+    database.discord_users.create_index(
+        [("presence_status", ASCENDING)]
     )
 
     database.reply_rate_limit.update_one(
@@ -260,10 +282,12 @@ def save_message(
     channel_id=None,
     guild_id=None,
     source_message_id=None,
+    author_id=None,
 ):
     get_collection("discord_messages").insert_one(
         {
             "author": author,
+            "author_id": int(author_id) if author_id is not None else None,
             "content": content,
             "channel_name": channel_name,
             "guild_name": guild_name,
@@ -273,6 +297,7 @@ def save_message(
                 int(source_message_id) if source_message_id is not None else None
             ),
             "reply_content": None,
+            "reply_type": None,
             "reply_timestamp": None,
             "timestamp": _as_utc_datetime(timestamp),
         }
@@ -294,7 +319,7 @@ def delete_old_messages(retention_days=MESSAGE_RETENTION_DAYS):
     return result.deleted_count
 
 
-def save_reply_for_latest_message(channel_id, reply_content, replied_at=None):
+def save_reply_for_latest_message(channel_id, reply_content, replied_at=None, reply_type="channel"):
     collection = get_collection("discord_messages")
     document = collection.find_one(
         {
@@ -319,6 +344,7 @@ def save_reply_for_latest_message(channel_id, reply_content, replied_at=None):
         {
             "$set": {
                 "reply_content": reply_content,
+                "reply_type": reply_type,
                 "reply_timestamp": _as_utc_datetime(replied_at),
             }
         },
@@ -334,7 +360,17 @@ def get_message_by_id(message_id):
     return get_collection("discord_messages").find_one({"_id": object_id})
 
 
-def save_reply_for_message(message_id, reply_content, replied_at=None):
+def get_latest_message_for_channel(channel_id):
+    try:
+        return get_collection("discord_messages").find_one(
+            {"channel_id": int(channel_id)},
+            sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
+        )
+    except Exception:
+        return None
+
+
+def save_reply_for_message(message_id, reply_content, replied_at=None, reply_type="channel"):
     try:
         object_id = ObjectId(str(message_id))
     except Exception:
@@ -345,6 +381,7 @@ def save_reply_for_message(message_id, reply_content, replied_at=None):
         {
             "$set": {
                 "reply_content": reply_content,
+                "reply_type": reply_type,
                 "reply_timestamp": _as_utc_datetime(replied_at),
             }
         },
@@ -384,6 +421,8 @@ def get_messages():
                 if isinstance(document.get("reply_timestamp"), datetime)
                 else document.get("reply_timestamp")
             ),
+            document.get("author_id"),
+            document.get("reply_type"),
         )
         for document in documents
     ]
@@ -512,3 +551,190 @@ def release_reply_slot(slot):
                 }
             },
         )
+
+
+# ── Discord Users High-Scale Directory ─────────────────────────
+
+def upsert_user(user_data):
+    """Upsert a single Discord user into MongoDB ensuring zero duplicates."""
+    if not user_data or not user_data.get("user_id"):
+        return
+    user_id = str(user_data["user_id"])
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    set_fields = {
+        "username": user_data.get("username", "Unknown"),
+        "display_name": user_data.get("display_name") or user_data.get("username", "Unknown"),
+        "server_nickname": user_data.get("server_nickname") or user_data.get("display_name") or user_data.get("username", "—"),
+        "is_bot": bool(user_data.get("is_bot", False)),
+        "bot_status": "Bot" if user_data.get("is_bot") else "Human",
+        "presence_status": user_data.get("presence_status", "offline"),
+        "last_seen_at": user_data.get("last_seen_at") or now_iso,
+    }
+    if user_data.get("avatar_url"):
+        set_fields["avatar_url"] = user_data["avatar_url"]
+    if user_data.get("joined_at"):
+        set_fields["joined_at"] = user_data["joined_at"]
+
+    add_to_set = {}
+    if user_data.get("server_name"):
+        add_to_set["servers"] = user_data["server_name"]
+    if user_data.get("channel_name"):
+        add_to_set["channels"] = user_data["channel_name"]
+    if user_data.get("assigned_roles"):
+        roles = user_data["assigned_roles"]
+        if isinstance(roles, list) and roles:
+            add_to_set["roles"] = {"$each": [r for r in roles if r != "@everyone"]}
+
+    update_doc = {"$set": set_fields}
+    if add_to_set:
+        update_doc["$addToSet"] = add_to_set
+
+    get_collection("discord_users").update_one(
+        {"user_id": user_id},
+        update_doc,
+        upsert=True,
+    )
+
+
+def bulk_upsert_users(users_list):
+    """Bulk upsert thousands/millions of users into MongoDB with high throughput."""
+    if not users_list:
+        return 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    operations = []
+
+    for u in users_list:
+        user_id = str(u.get("user_id", ""))
+        if not user_id:
+            continue
+        set_fields = {
+            "username": u.get("username", "Unknown"),
+            "display_name": u.get("display_name") or u.get("username", "Unknown"),
+            "server_nickname": u.get("server_nickname") or u.get("display_name") or u.get("username", "—"),
+            "is_bot": bool(u.get("is_bot", False)),
+            "bot_status": "Bot" if u.get("is_bot") else "Human",
+            "presence_status": u.get("presence_status", "offline"),
+            "last_seen_at": u.get("last_seen_at") or now_iso,
+        }
+        if u.get("avatar_url"):
+            set_fields["avatar_url"] = u["avatar_url"]
+        if u.get("joined_at"):
+            set_fields["joined_at"] = u["joined_at"]
+
+        add_to_set = {}
+        if u.get("server_name"):
+            add_to_set["servers"] = u["server_name"]
+        if u.get("channel_name"):
+            add_to_set["channels"] = u["channel_name"]
+        if u.get("assigned_roles"):
+            roles = u["assigned_roles"]
+            if isinstance(roles, list) and roles:
+                add_to_set["roles"] = {"$each": [r for r in roles if r != "@everyone"]}
+
+        update_doc = {"$set": set_fields}
+        if add_to_set:
+            update_doc["$addToSet"] = add_to_set
+
+        operations.append(UpdateOne({"user_id": user_id}, update_doc, upsert=True))
+
+    if not operations:
+        return 0
+
+    collection = get_collection("discord_users")
+    total_upserted = 0
+    BATCH_SIZE = 500
+    for i in range(0, len(operations), BATCH_SIZE):
+        batch = operations[i:i + BATCH_SIZE]
+        res = collection.bulk_write(batch, ordered=False)
+        total_upserted += (res.upserted_count + res.modified_count)
+    return total_upserted
+
+
+def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=None, presence=None):
+    """Retrieve paginated, deduplicated users directly from MongoDB with indexed filtering."""
+    collection = get_collection("discord_users")
+    try:
+        page = max(1, int(page))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        limit = min(200, max(10, int(limit)))
+    except (ValueError, TypeError):
+        limit = 50
+
+    skip = (page - 1) * limit
+    query = {}
+
+    if server:
+        query["servers"] = server
+    if user_type == "human":
+        query["is_bot"] = False
+    elif user_type == "bot":
+        query["is_bot"] = True
+
+    if presence and presence != "all":
+        query["presence_status"] = presence.lower()
+
+    if search:
+        s_clean = search.strip()
+        regex_pattern = {"$regex": s_clean, "$options": "i"}
+        query["$or"] = [
+            {"username": regex_pattern},
+            {"display_name": regex_pattern},
+            {"server_nickname": regex_pattern},
+            {"user_id": regex_pattern},
+            {"roles": regex_pattern},
+            {"servers": regex_pattern},
+        ]
+
+    total_count = collection.count_documents(query)
+    cursor = collection.find(query).sort("last_seen_at", DESCENDING).skip(skip).limit(limit)
+
+    users = []
+    for doc in cursor:
+        doc.pop("_id", None)
+        servers_list = doc.get("servers", [])
+        if isinstance(servers_list, list):
+            doc["server_name"] = ", ".join(servers_list) if servers_list else "—"
+        channels_list = doc.get("channels", [])
+        if isinstance(channels_list, list):
+            doc["channel_name"] = ", ".join(channels_list) if channels_list else "—"
+        doc["assigned_roles"] = doc.get("roles", [])
+        users.append(doc)
+
+    total_pages = max(1, (total_count + limit - 1) // limit)
+
+    # Calculate global counters
+    try:
+        total_all = collection.estimated_document_count()
+        humans_count = collection.count_documents({"is_bot": False})
+        bots_count = collection.count_documents({"is_bot": True})
+        online_count = collection.count_documents({"presence_status": {"$in": ["online", "idle", "dnd"]}})
+    except Exception:
+        total_all = total_count
+        humans_count = 0
+        bots_count = 0
+        online_count = 0
+
+    stats = {
+        "total": total_all,
+        "humans": humans_count,
+        "bots": bots_count,
+        "online": online_count,
+    }
+
+    return {
+        "users": users,
+        "total": total_count,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "stats": stats,
+    }
+
+
+def get_all_user_servers():
+    """Return distinct server names where indexed users exist."""
+    collection = get_collection("discord_users")
+    return sorted([s for s in collection.distinct("servers") if s])

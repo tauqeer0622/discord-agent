@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -8,8 +9,11 @@ import os
 import random
 from database import (
     acquire_reply_slot,
+    bulk_upsert_users,
+    get_all_user_servers,
     get_message_by_id,
     get_messages,
+    get_paginated_users,
     release_reply_slot,
     save_reply_for_message,
 )
@@ -26,10 +30,16 @@ from discord_permissions import (
     is_restricted_text_channel,
 )
 from message_listener import process_message
+from market_image_renderer import (
+    generate_visual_style_for_market,
+    parse_market_data,
+    render_market_image,
+    sample_market_data_json,
+)
 from promo_sender import generate_promo_variant
 from state_manager import state
 from thread_manager import thread_cleanup_loop
-from typing_simulator import simulate_typing_and_send
+from typing_simulator import calculate_typing_duration
 
 from database import initialize_database
 
@@ -57,6 +67,10 @@ except ValueError:
 PROMO_DEFAULT_MIN_DELAY_SECONDS = 120
 PROMO_DEFAULT_MAX_DELAY_SECONDS = 300
 PROMO_MAX_MESSAGE_LENGTH = 1900
+try:
+    PROMO_PREVIEW_CONCURRENCY = max(1, int(os.getenv("PROMO_PREVIEW_CONCURRENCY", "8")))
+except ValueError:
+    PROMO_PREVIEW_CONCURRENCY = 8
 BULK_PROMO_ENABLED = os.getenv("BULK_PROMO_ENABLED", "true").lower() == "true"
 DISCORD_AUTH_PROBE_ENABLED = os.getenv("DISCORD_AUTH_PROBE_ENABLED", "false").lower() == "true"
 try:
@@ -69,7 +83,6 @@ PROMO_ALLOWED_IMAGE_TYPES = {
     "image/png",
     "image/webp",
 }
-
 DISCORD_API_BASE_URL = "https://discord.com/api/v9"
 DISCORD_TEXT_CHANNEL_TYPE = 0
 DISCORD_ANNOUNCEMENT_CHANNEL_TYPE = 5
@@ -318,6 +331,9 @@ class CommandCenterClient(discord.Client):
             web.get("/api/status",                        self.handle_get_status),
             web.get("/api/messages",                      self.handle_get_messages),
             web.post("/api/messages/{message_id}/reply",  self.handle_post_message_reply),
+            web.get("/api/users",                         self.handle_get_users),
+            web.get("/api/users/servers",                 self.handle_get_user_servers),
+            web.post("/api/users/{user_id}/dm",           self.handle_post_user_dm),
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
             web.get("/api/guilds",                        self.handle_get_guilds),
@@ -331,6 +347,7 @@ class CommandCenterClient(discord.Client):
             web.post("/api/bulk-promo/send",              self.handle_bulk_promo_send),
             web.post("/api/bulk-promo/cancel",            self.handle_bulk_promo_cancel),
             web.get("/api/bulk-promo/status",             self.handle_bulk_promo_status),
+            web.post("/api/market-image/generate",        self.handle_market_image_generate),
             # CORS pre-flight (catch-all)
             web.options("/{path_info:.*}",                self.handle_options_generic),
             web.get("/messages", self.handle_messages_page),
@@ -417,6 +434,8 @@ class CommandCenterClient(discord.Client):
                 ),
                 "reply": row[9] or None,
                 "reply_timestamp": row[10] if len(row) > 10 else None,
+                "author_id": str(row[11]) if len(row) > 11 and row[11] is not None else None,
+                "reply_type": row[12] if len(row) > 12 else None,
             })
 
         return web.json_response(
@@ -429,6 +448,9 @@ class CommandCenterClient(discord.Client):
             message_id = request.match_info["message_id"]
             data = await request.json()
             reply_content = str(data.get("reply", "")).strip()
+            mode = str(data.get("mode", "channel")).strip().lower()
+            send_as_dm = bool(data.get("send_as_dm", False)) or (mode == "dm")
+
             if not reply_content:
                 return web.json_response(
                     {"error": "Reply message is required"},
@@ -452,6 +474,91 @@ class CommandCenterClient(discord.Client):
                     status=409, headers=CORS_HEADERS,
                 )
 
+            # ── Handle Private DM Reply Mode ───────────────────────
+            if send_as_dm:
+                author_id = stored_message.get("author_id")
+                channel_id = stored_message.get("channel_id")
+                source_message_id = stored_message.get("source_message_id")
+
+                # If author_id was not yet in stored_message (older legacy entry), attempt to fetch from channel
+                if not author_id and channel_id and source_message_id:
+                    source_channel = self.get_channel(int(channel_id))
+                    if source_channel is None:
+                        try:
+                            source_channel = await self.fetch_channel(int(channel_id))
+                        except (discord.NotFound, discord.Forbidden):
+                            source_channel = None
+                    if source_channel:
+                        try:
+                            orig = await source_channel.fetch_message(int(source_message_id))
+                            if orig and orig.author:
+                                author_id = orig.author.id
+                        except Exception:
+                            pass
+
+                if not author_id:
+                    return web.json_response(
+                        {"error": "Sender User ID could not be identified for DM"},
+                        status=400, headers=CORS_HEADERS,
+                    )
+
+                target_user = self.get_user(int(author_id))
+                if target_user is None:
+                    try:
+                        target_user = await self.fetch_user(int(author_id))
+                    except (discord.NotFound, discord.Forbidden):
+                        target_user = None
+
+                if target_user is None:
+                    return web.json_response(
+                        {"error": f"Discord user ({author_id}) is unavailable or not found"},
+                        status=404, headers=CORS_HEADERS,
+                    )
+
+                reply_slot = acquire_reply_slot()
+                if not reply_slot:
+                    return web.json_response(
+                        {"error": "Global Discord reply limit reached"},
+                        status=429, headers=CORS_HEADERS,
+                    )
+
+                try:
+                    async with target_user.typing():
+                        await asyncio.sleep(calculate_typing_duration(reply_content))
+                    await target_user.send(reply_content)
+                except discord.Forbidden:
+                    release_reply_slot(reply_slot)
+                    return web.json_response(
+                        {"error": f"Cannot send DM to @{target_user.name}: User has direct messages closed or blocked."},
+                        status=403, headers=CORS_HEADERS,
+                    )
+                except Exception as exc:
+                    release_reply_slot(reply_slot)
+                    logger.error("Dashboard DM reply failed: %s", exc)
+                    return web.json_response(
+                        {"error": f"Failed to send DM to @{target_user.name}: {str(exc)}"},
+                        status=500, headers=CORS_HEADERS,
+                    )
+
+                replied_at = datetime.now(timezone.utc)
+                save_reply_for_message(message_id, reply_content, replied_at, reply_type="dm")
+                logger.info(
+                    "Dashboard DM reply sent for message %s to user %s (%s)",
+                    message_id,
+                    target_user.name,
+                    author_id,
+                )
+                return web.json_response(
+                    {
+                        "success": True,
+                        "reply": reply_content,
+                        "reply_type": "dm",
+                        "reply_timestamp": replied_at.isoformat(),
+                    },
+                    headers=CORS_HEADERS,
+                )
+
+            # ── Handle Public Channel Reply Mode ───────────────────
             channel_id = stored_message.get("channel_id")
             if not channel_id:
                 return web.json_response(
@@ -480,6 +587,39 @@ class CommandCenterClient(discord.Client):
                     {"error": "Source channel is locked/private or cannot be posted in"},
                     status=403, headers=CORS_HEADERS,
                 )
+            source_message_id = stored_message.get("source_message_id")
+            if not source_message_id:
+                return web.json_response(
+                    {"error": "Original Discord message reference is missing"},
+                    status=400, headers=CORS_HEADERS,
+                )
+            try:
+                original_message = await source_channel.fetch_message(int(source_message_id))
+            except discord.NotFound:
+                return web.json_response(
+                    {"error": "Original Discord message was not found"},
+                    status=404, headers=CORS_HEADERS,
+                )
+            except discord.Forbidden:
+                return web.json_response(
+                    {"error": "Cannot access the original Discord message"},
+                    status=403, headers=CORS_HEADERS,
+                )
+            try:
+                latest_message = None
+                async for message in source_channel.history(limit=1):
+                    latest_message = message
+                should_reference_original = (
+                    latest_message is not None
+                    and latest_message.id != int(source_message_id)
+                )
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                logger.warning(
+                    "Could not check latest message in channel %s before reply: %s",
+                    channel_id,
+                    exc,
+                )
+                should_reference_original = True
 
             reply_slot = acquire_reply_slot()
             if not reply_slot:
@@ -488,16 +628,26 @@ class CommandCenterClient(discord.Client):
                     status=429, headers=CORS_HEADERS,
                 )
 
-            sent = await simulate_typing_and_send(source_channel, reply_content)
-            if not sent:
+            try:
+                async with source_channel.typing():
+                    await asyncio.sleep(calculate_typing_duration(reply_content))
+                if should_reference_original:
+                    await original_message.reply(
+                        reply_content,
+                        mention_author=False,
+                    )
+                else:
+                    await source_channel.send(reply_content)
+            except Exception as exc:
                 release_reply_slot(reply_slot)
+                logger.error("Dashboard Discord reply failed: %s", exc)
                 return web.json_response(
                     {"error": "Reply failed to send to the source channel"},
                     status=500, headers=CORS_HEADERS,
                 )
 
             replied_at = datetime.now(timezone.utc)
-            save_reply_for_message(message_id, reply_content, replied_at)
+            save_reply_for_message(message_id, reply_content, replied_at, reply_type="channel")
             logger.info(
                 "Dashboard reply sent for message %s to channel %s",
                 message_id,
@@ -507,6 +657,7 @@ class CommandCenterClient(discord.Client):
                 {
                     "success": True,
                     "reply": reply_content,
+                    "reply_type": "channel",
                     "reply_timestamp": replied_at.isoformat(),
                 },
                 headers=CORS_HEADERS,
@@ -698,6 +849,29 @@ class CommandCenterClient(discord.Client):
             return f"Image must be {max_mb} MB or smaller"
         return None
 
+    def _decode_generated_bulk_image(self, image_json):
+        if not image_json:
+            return None
+        if isinstance(image_json, str):
+            try:
+                image_json = json.loads(image_json)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Generated image data must be valid JSON") from exc
+        if not isinstance(image_json, dict):
+            raise RuntimeError("Generated image data must be a JSON object")
+        content_type = image_json.get("content_type") or "image/png"
+        if content_type not in PROMO_ALLOWED_IMAGE_TYPES:
+            raise RuntimeError("Generated image must be PNG, JPEG, GIF, or WEBP")
+        try:
+            image_data = base64.b64decode(image_json.get("data_base64") or "", validate=True)
+        except Exception as exc:
+            raise RuntimeError("Generated image data is invalid") from exc
+        return {
+            "filename": image_json.get("filename") or "market-summary.png",
+            "content_type": content_type,
+            "data": image_data,
+        }
+
     async def _read_bulk_promo_send_data(self, request):
         if not request.content_type.startswith("multipart/"):
             return await request.json(), None
@@ -731,6 +905,54 @@ class CommandCenterClient(discord.Client):
 
         return data, image_payload
 
+    async def _build_market_image(self, raw_data):
+        from ai_engine import client as openai_client
+        market_data = parse_market_data(raw_data)
+
+        # If the caller pinned a style explicitly, use it.
+        # Otherwise the LLM generates a fully custom style from scratch.
+        explicit_style = (
+            isinstance(raw_data, dict) and raw_data.get("visual_style")
+        ) or (
+            isinstance(raw_data, str) and "visual_style" in raw_data
+        )
+        if not explicit_style:
+            generated = await generate_visual_style_for_market(market_data, openai_client)
+            market_data["_generated_style"] = generated   # picked up by _visual_style()
+            market_data["_style_rationale"] = generated.get("_rationale", "")
+        else:
+            market_data["_style_rationale"] = "explicit"
+
+        image_bytes = await render_market_image(market_data)
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        style_meta = market_data.get("_generated_style") or {}
+        return {
+            "filename": "market-summary.png",
+            "content_type": "image/png",
+            "data_base64": encoded,
+            "data_url": f"data:image/png;base64,{encoded}",
+            "sample_data": sample_market_data_json(),
+            "style": {
+                "generated": not explicit_style,
+                "layout": style_meta.get("layout"),
+                "accent": style_meta.get("accent"),
+                "font": style_meta.get("font"),
+                "rationale": market_data.get("_style_rationale"),
+            },
+        }
+
+    async def handle_market_image_generate(self, request):
+        try:
+            data = await request.json()
+            market_image = await self._build_market_image(data.get("market_image_data"))
+            return web.json_response(
+                {"market_image": market_image},
+                headers=CORS_HEADERS,
+            )
+        except Exception as e:
+            logger.error("market image generate error: %s", e)
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
     def _public_bulk_target(self, target):
         return {
             key: value
@@ -744,21 +966,29 @@ class CommandCenterClient(discord.Client):
         if not total:
             return []
 
-        previews = []
-        for index, target in enumerate(ready_targets, start=1):
+        semaphore = asyncio.Semaphore(min(PROMO_PREVIEW_CONCURRENCY, total))
+
+        async def build_preview(index, target):
             preview = self._public_bulk_target(target)
-            try:
-                content = await generate_promo_variant(base_message, target, index, total)
-                if not content:
-                    raise RuntimeError("Generated message was empty")
-                if len(content) > PROMO_MAX_MESSAGE_LENGTH:
-                    raise RuntimeError("Generated message was too long")
-                preview["content"] = content
-            except Exception as e:
-                preview["status"] = "preview_failed"
-                preview["error"] = str(e)
-            previews.append(preview)
-        return previews
+            async with semaphore:
+                try:
+                    content = await generate_promo_variant(base_message, target, index, total)
+                    if not content:
+                        raise RuntimeError("Generated message was empty")
+                    if len(content) > PROMO_MAX_MESSAGE_LENGTH:
+                        raise RuntimeError("Generated message was too long")
+                    preview["content"] = content
+                except Exception as e:
+                    preview["status"] = "preview_failed"
+                    preview["error"] = str(e)
+            return preview
+
+        return await asyncio.gather(
+            *(
+                build_preview(index, target)
+                for index, target in enumerate(ready_targets, start=1)
+            )
+        )
 
     def _bulk_promo_status_response(self):
         if not self.bulk_promo_job:
@@ -785,9 +1015,10 @@ class CommandCenterClient(discord.Client):
             data = await request.json()
             base_message = str(data.get("base_message", "")).strip()
             image_selected = bool(data.get("image_selected"))
+            market_image_enabled = bool(data.get("market_image_enabled"))
             validation_error = self._validate_bulk_message(
                 base_message,
-                allow_empty=image_selected,
+                allow_empty=image_selected or market_image_enabled,
             )
             if validation_error:
                 return web.json_response(
@@ -815,10 +1046,16 @@ class CommandCenterClient(discord.Client):
                     for target in targets
                     if target.get("status") == "ready"
                 ]
+            market_image = None
+            if market_image_enabled:
+                market_image = await self._build_market_image(
+                    data.get("market_image_data"),
+                )
             return web.json_response(
                 {
                     "targets": [self._public_bulk_target(target) for target in targets],
                     "previews": previews,
+                    "market_image": market_image,
                 },
                 headers=CORS_HEADERS,
             )
@@ -841,6 +1078,8 @@ class CommandCenterClient(discord.Client):
                 )
 
             data, image_payload = await self._read_bulk_promo_send_data(request)
+            if not image_payload and data.get("generated_image"):
+                image_payload = self._decode_generated_bulk_image(data.get("generated_image"))
             image_validation_error = self._validate_bulk_image(image_payload)
             if image_validation_error:
                 return web.json_response(
@@ -976,16 +1215,17 @@ class CommandCenterClient(discord.Client):
                 self.bulk_promo_job["current_channel_id"] = str(target["channel_id"])
                 try:
                     content = preview_content.get(str(target["channel_id"]))
-                    if not content and base_message:
+                    if not content and base_message and not image_payload:
                         content = await generate_promo_variant(
                             base_message,
                             target,
                             index,
                             len(targets),
                         )
-                    if not content or len(content) > PROMO_MAX_MESSAGE_LENGTH:
-                        if not image_payload:
-                            raise RuntimeError("Promo message was empty or too long")
+                    if content and len(content) > PROMO_MAX_MESSAGE_LENGTH:
+                        raise RuntimeError("Promo message was too long")
+                    if not content and not image_payload:
+                        raise RuntimeError("Promo message was empty")
 
                     file = None
                     if image_payload:
@@ -1052,6 +1292,7 @@ class CommandCenterClient(discord.Client):
                 headers=CORS_HEADERS
             )
 
+
         except Exception as e:
 
             logger.error(f"fetch_guilds error: {e}")
@@ -1071,6 +1312,152 @@ class CommandCenterClient(discord.Client):
                 guilds,
                 headers=CORS_HEADERS
             )
+
+    async def _sync_guild_members_to_db(self):
+        """Passively syncs guild members into MongoDB in non-blocking batches."""
+        if getattr(self, "_syncing_members", False):
+            return
+        self._syncing_members = True
+        try:
+            for guild in list(self.guilds):
+                members_to_upsert = []
+                role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
+                active_configs = [
+                    c for c in config_manager.get_all()
+                    if str(c.get("guild_id")) == str(guild.id) and c.get("active", True)
+                ]
+                channel_str = f"#{guild.name}"
+                if active_configs:
+                    channel_str = ", ".join(f"#{c.get('label') or c.get('channel_id')}" for c in active_configs[:3])
+                elif guild.text_channels:
+                    channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
+
+                for member in list(guild.members):
+                    display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                    roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                    avatar_url = str(member.avatar.url) if member.avatar else None
+                    members_to_upsert.append({
+                        "user_id": str(member.id),
+                        "username": member.name,
+                        "display_name": display_name,
+                        "server_nickname": member.nick or display_name,
+                        "server_name": guild.name,
+                        "channel_name": channel_str,
+                        "assigned_roles": roles,
+                        "is_bot": bool(member.bot),
+                        "presence_status": str(getattr(member, "status", "offline")),
+                        "avatar_url": avatar_url,
+                        "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                    })
+
+                if members_to_upsert:
+                    bulk_upsert_users(members_to_upsert)
+                await asyncio.sleep(0.05)
+        except Exception as exc:
+            logger.warning("Background user sync warning: %s", exc)
+        finally:
+            self._syncing_members = False
+
+    async def handle_get_users(self, request):
+        """Return paginated, deduplicated members from MongoDB with instant filtering."""
+        # Kick off background sync
+        asyncio.create_task(self._sync_guild_members_to_db())
+
+        page = request.query.get("page", "1")
+        limit = request.query.get("limit", "50")
+        search = request.query.get("search")
+        server = request.query.get("server")
+        user_type = request.query.get("type")
+        presence = request.query.get("presence")
+
+        result = get_paginated_users(
+            page=page,
+            limit=limit,
+            search=search,
+            server=server,
+            user_type=user_type,
+            presence=presence,
+        )
+
+        return web.json_response(result, headers=CORS_HEADERS)
+
+    async def handle_get_user_servers(self, request):
+        """Return distinct server names where users exist."""
+        servers = get_all_user_servers()
+        # Fallback to current guild names if database is empty
+        if not servers:
+            servers = sorted([g.name for g in self.guilds if g.name])
+        return web.json_response(servers, headers=CORS_HEADERS)
+
+    async def handle_post_user_dm(self, request):
+        """Send a direct DM to a user by user_id."""
+        try:
+            user_id = request.match_info["user_id"]
+            data = await request.json()
+            message_content = str(data.get("message", "")).strip()
+
+            if not message_content:
+                return web.json_response(
+                    {"error": "Message content is required"},
+                    status=400, headers=CORS_HEADERS,
+                )
+            if len(message_content) > PROMO_MAX_MESSAGE_LENGTH:
+                return web.json_response(
+                    {"error": f"Message must be under {PROMO_MAX_MESSAGE_LENGTH} characters"},
+                    status=400, headers=CORS_HEADERS,
+                )
+
+            target_user = self.get_user(int(user_id))
+            if target_user is None:
+                try:
+                    target_user = await self.fetch_user(int(user_id))
+                except (discord.NotFound, discord.Forbidden):
+                    target_user = None
+
+            if target_user is None:
+                return web.json_response(
+                    {"error": f"Discord user ({user_id}) not found or unavailable"},
+                    status=404, headers=CORS_HEADERS,
+                )
+
+            reply_slot = acquire_reply_slot()
+            if not reply_slot:
+                return web.json_response(
+                    {"error": "Global Discord reply limit reached"},
+                    status=429, headers=CORS_HEADERS,
+                )
+
+            try:
+                async with target_user.typing():
+                    await asyncio.sleep(calculate_typing_duration(message_content))
+                await target_user.send(message_content)
+            except discord.Forbidden:
+                release_reply_slot(reply_slot)
+                return web.json_response(
+                    {"error": f"Cannot send DM to @{target_user.name}: User has direct messages closed or blocked."},
+                    status=403, headers=CORS_HEADERS,
+                )
+            except Exception as exc:
+                release_reply_slot(reply_slot)
+                logger.error("Direct User DM failed: %s", exc)
+                return web.json_response(
+                    {"error": f"Failed to send DM to @{target_user.name}: {str(exc)}"},
+                    status=500, headers=CORS_HEADERS,
+                )
+
+            logger.info("Direct DM sent to user %s (%s)", target_user.name, user_id)
+            return web.json_response(
+                {
+                    "success": True,
+                    "user_id": str(user_id),
+                    "username": target_user.name,
+                    "sent_at": datetime.now(timezone.utc).isoformat(),
+                },
+                headers=CORS_HEADERS,
+            )
+        except Exception as e:
+            logger.error("handle_post_user_dm error: %s", e)
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
 
     async def handle_get_memory(self, request):
         """Return the AI conversation memory file."""

@@ -407,10 +407,19 @@ function renderMessages(messages){
                     ${escapeHtml(msg.content)}
                 </div>
 
+                ${msg.reply ? `
+                <div style="margin-top:12px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:10px;border-left:3px solid ${msg.reply_type==='dm'?'#3b82f6':'#22c55e'};">
+                    <div style="font-size:11px;font-weight:700;color:${msg.reply_type==='dm'?'#60a5fa':'#4ade80'};margin-bottom:4px;">
+                        ${msg.reply_type === 'dm' ? '🔒 REPLIED VIA DIRECT MESSAGE (DM)' : '💬 REPLIED IN CHANNEL'}
+                    </div>
+                    <div style="font-size:13px;color:#e2e8f0;line-height:1.4;">${escapeHtml(msg.reply)}</div>
+                </div>
+                ` : ''}
+
                 <div class="footer">
 
                     <span>
-                        Message ID: ${msg.id}
+                        Message ID: ${msg.id} ${msg.author_id ? `• Author ID: ${escapeHtml(msg.author_id)}` : ''}
                     </span>
 
                     ${sourceLink}
@@ -425,8 +434,6 @@ function renderMessages(messages){
 }
 
 function escapeHtml(text){
-
-    if(!text) return '';
 
     return text
         .replace(/&/g,'&amp;')

@@ -693,14 +693,23 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
 
     users = []
     for doc in cursor:
-        doc.pop("_id", None)
         servers_list = doc.get("servers", [])
         if isinstance(servers_list, list):
-            doc["server_name"] = ", ".join(servers_list) if servers_list else "—"
+            doc["servers"] = [s for s in servers_list if s]
+            doc["server_name"] = ", ".join(doc["servers"]) if doc["servers"] else "—"
+        else:
+            doc["servers"] = [str(servers_list)] if servers_list else []
+            doc["server_name"] = str(servers_list) if servers_list else "—"
+
         channels_list = doc.get("channels", [])
         if isinstance(channels_list, list):
-            doc["channel_name"] = ", ".join(channels_list) if channels_list else "—"
-        doc["assigned_roles"] = doc.get("roles", [])
+            doc["channels"] = [c for c in channels_list if c]
+            doc["channel_name"] = ", ".join(doc["channels"]) if doc["channels"] else "—"
+        else:
+            doc["channels"] = [str(channels_list)] if channels_list else []
+            doc["channel_name"] = str(channels_list) if channels_list else "—"
+
+        doc["assigned_roles"] = [r for r in doc.get("roles", []) if r and r != "@everyone"]
         users.append(doc)
 
     total_pages = max(1, (total_count + limit - 1) // limit)

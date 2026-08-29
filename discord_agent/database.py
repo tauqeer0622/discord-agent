@@ -693,6 +693,7 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
 
     users = []
     for doc in cursor:
+        doc.pop("_id", None)
         servers_list = doc.get("servers", [])
         if isinstance(servers_list, list):
             doc["servers"] = [s for s in servers_list if s]

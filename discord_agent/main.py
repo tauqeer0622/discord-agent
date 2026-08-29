@@ -1360,34 +1360,53 @@ class CommandCenterClient(discord.Client):
 
     async def handle_get_users(self, request):
         """Return paginated, deduplicated members from MongoDB with instant filtering."""
-        # Kick off background sync
-        asyncio.create_task(self._sync_guild_members_to_db())
+        try:
+            # Kick off background sync
+            asyncio.create_task(self._sync_guild_members_to_db())
 
-        page = request.query.get("page", "1")
-        limit = request.query.get("limit", "50")
-        search = request.query.get("search")
-        server = request.query.get("server")
-        user_type = request.query.get("type")
-        presence = request.query.get("presence")
+            page = request.query.get("page", "1")
+            limit = request.query.get("limit", "50")
+            search = request.query.get("search")
+            server = request.query.get("server")
+            user_type = request.query.get("type")
+            presence = request.query.get("presence")
 
-        result = get_paginated_users(
-            page=page,
-            limit=limit,
-            search=search,
-            server=server,
-            user_type=user_type,
-            presence=presence,
-        )
+            result = get_paginated_users(
+                page=page,
+                limit=limit,
+                search=search,
+                server=server,
+                user_type=user_type,
+                presence=presence,
+            )
 
-        return web.json_response(result, headers=CORS_HEADERS)
+            return web.json_response(result, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_users error: %s", exc)
+            return web.json_response(
+                {
+                    "users": [],
+                    "total": 0,
+                    "page": 1,
+                    "limit": 50,
+                    "total_pages": 1,
+                    "stats": {"total": 0, "humans": 0, "bots": 0, "online": 0},
+                    "error": str(exc),
+                },
+                headers=CORS_HEADERS,
+            )
 
     async def handle_get_user_servers(self, request):
         """Return distinct server names where users exist."""
-        servers = get_all_user_servers()
-        # Fallback to current guild names if database is empty
-        if not servers:
-            servers = sorted([g.name for g in self.guilds if g.name])
-        return web.json_response(servers, headers=CORS_HEADERS)
+        try:
+            servers = get_all_user_servers()
+            # Fallback to current guild names if database is empty
+            if not servers:
+                servers = sorted([g.name for g in self.guilds if g.name])
+            return web.json_response(servers, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_user_servers error: %s", exc)
+            return web.json_response([], headers=CORS_HEADERS)
 
     async def handle_post_user_dm(self, request):
         """Send a direct DM to a user by user_id."""

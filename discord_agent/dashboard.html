@@ -517,8 +517,8 @@
     .usr-btn-refresh{padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.82rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s}
     .usr-btn-refresh:hover{background:rgba(124,58,237,.18);border-color:rgba(124,58,237,.35);color:var(--purple-l)}
     
-    .usr-tbl-head{display:grid;grid-template-columns:180px 160px 130px 180px 1fr 110px 90px 100px;padding:.85rem 1.5rem;border-bottom:1px solid var(--border);font-size:.7rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;align-items:center;gap:10px}
-    .usr-tbl-row{display:grid;grid-template-columns:180px 160px 130px 180px 1fr 110px 90px 100px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
+    .usr-tbl-head{display:grid;grid-template-columns:170px 150px 120px 140px 140px 1fr 110px 90px 100px;padding:.85rem 1.5rem;border-bottom:1px solid var(--border);font-size:.7rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;align-items:center;gap:10px}
+    .usr-tbl-row{display:grid;grid-template-columns:170px 150px 120px 140px 140px 1fr 110px 90px 100px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
     .usr-tbl-row:last-child{border-bottom:none}
     .usr-tbl-row:hover{background:rgba(255,255,255,.025)}
 
@@ -837,7 +837,8 @@
               <div>Author / User</div>
               <div>User ID</div>
               <div>Server Nickname</div>
-              <div>Server & Channels</div>
+              <div>Server Name</div>
+              <div>Channel Name</div>
               <div>Assigned Roles</div>
               <div>Online Status</div>
               <div>Bot Status</div>
@@ -2082,12 +2083,16 @@ function renderUsers(data){
           ${esc(u.server_nickname||'—')}
         </div>
 
-        <!-- Server & Channels -->
+        <!-- Server Name -->
         <div style="overflow:hidden">
           <div style="font-weight:600;font-size:.8rem;color:var(--purple-l);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(u.server_name||'—')}">
             🌐 ${esc(u.server_name||'—')}
           </div>
-          <div style="font-size:.7rem;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(u.channel_name||'—')}">
+        </div>
+
+        <!-- Channel Name -->
+        <div style="overflow:hidden">
+          <div style="font-size:.78rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(u.channel_name||'—')}">
             ${esc(u.channel_name||'—')}
           </div>
         </div>

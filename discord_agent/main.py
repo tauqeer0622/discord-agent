@@ -1314,7 +1314,7 @@ class CommandCenterClient(discord.Client):
             )
 
     async def _sync_guild_members_to_db(self):
-        """Passively syncs ALL guild members into MongoDB in non-blocking batches."""
+        """High-speed member discovery across all joined guilds via channel history + search scraping."""
         if getattr(self, "_syncing_members", False):
             return
         self._syncing_members = True
@@ -1325,11 +1325,11 @@ class CommandCenterClient(discord.Client):
                     c for c in config_manager.get_all()
                     if str(c.get("guild_id")) == str(guild.id) and c.get("active", True)
                 ]
-                channel_str = f"#{guild.name}"
+                default_channel_str = f"#{guild.name}"
                 if active_configs:
-                    channel_str = ", ".join(f"#{c.get('label') or c.get('channel_id')}" for c in active_configs[:3])
+                    default_channel_str = ", ".join(f"#{c.get('label') or c.get('channel_id')}" for c in active_configs[:3])
                 elif guild.text_channels:
-                    channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
+                    default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
                 # 1. Gateway chunking (requests members from gateway cache)
                 try:
@@ -1352,7 +1352,7 @@ class CommandCenterClient(discord.Client):
                             "display_name": display_name,
                             "server_nickname": member.nick or display_name,
                             "server_name": guild.name,
-                            "channel_name": channel_str,
+                            "channel_name": default_channel_str,
                             "assigned_roles": roles,
                             "is_bot": bool(member.bot),
                             "presence_status": str(getattr(member, "status", "offline")),
@@ -1362,122 +1362,123 @@ class CommandCenterClient(discord.Client):
                     if batch:
                         bulk_upsert_users(batch)
 
-                # 2. REST API Pagination (fetches 1,000 members per request)
+                # 2. Fast Channel History Scraping (Reads messages across accessible channels in the guild)
+                # User accounts have full permission to read message history across channels
+                accessible_channels = [
+                    ch for ch in guild.text_channels 
+                    if ch.permissions_for(guild.me).read_message_history and not is_restricted_text_channel(ch, self.user)
+                ]
+                for ch in accessible_channels[:25]:
+                    try:
+                        channel_users = {}
+                        async for msg in ch.history(limit=250):
+                            author = msg.author
+                            if not author or author.id in channel_users:
+                                continue
+                            author_name = getattr(author, "name", "Unknown")
+                            display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name
+                            server_nick = getattr(author, "nick", None) or display_name
+                            avatar_url = str(author.avatar.url) if getattr(author, "avatar", None) else None
+                            roles = []
+                            if hasattr(author, "roles"):
+                                roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
+
+                            channel_users[author.id] = {
+                                "user_id": str(author.id),
+                                "username": author_name,
+                                "display_name": display_name,
+                                "server_nickname": server_nick,
+                                "server_name": guild.name,
+                                "channel_name": f"#{ch.name}",
+                                "assigned_roles": roles,
+                                "is_bot": bool(getattr(author, "bot", False)),
+                                "presence_status": str(getattr(author, "status", "offline")),
+                                "avatar_url": avatar_url,
+                                "last_seen_at": msg.created_at.isoformat() if msg.created_at else None,
+                            }
+                            # Also capture any mentioned members
+                            for m_user in getattr(msg, "mentions", []):
+                                if m_user and m_user.id not in channel_users:
+                                    m_name = getattr(m_user, "name", "Unknown")
+                                    m_disp = getattr(m_user, "global_name", None) or getattr(m_user, "display_name", None) or m_name
+                                    channel_users[m_user.id] = {
+                                        "user_id": str(m_user.id),
+                                        "username": m_name,
+                                        "display_name": m_disp,
+                                        "server_nickname": getattr(m_user, "nick", None) or m_disp,
+                                        "server_name": guild.name,
+                                        "channel_name": f"#{ch.name}",
+                                        "assigned_roles": [role_map.get(r.id, r.name) for r in getattr(m_user, "roles", []) if r.name != "@everyone"],
+                                        "is_bot": bool(getattr(m_user, "bot", False)),
+                                        "presence_status": "offline",
+                                        "avatar_url": str(m_user.avatar.url) if getattr(m_user, "avatar", None) else None,
+                                    }
+
+                        if channel_users:
+                            bulk_upsert_users(list(channel_users.values()))
+                        await asyncio.sleep(0.08)
+                    except Exception as ch_err:
+                        logger.debug("Channel history sync error for %s: %s", ch.name, ch_err)
+
+                # 3. Discord Search API Indexing with expanded 2-letter search prefixes
                 headers = {
                     "Authorization": DISCORD_TOKEN,
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 }
-                last_member_id = 0
-                total_rest_indexed = 0
-
                 async with ClientSession(headers=headers) as session:
-                    # Paginate up to 50,000 members per guild
-                    for _ in range(50):
-                        url = f"https://discord.com/api/v9/guilds/{guild.id}/members?limit=1000"
-                        if last_member_id:
-                            url += f"&after={last_member_id}"
-
+                    # Common name prefixes to discover members rapidly
+                    prefixes = [
+                        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+                        "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+                        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "_", ".",
+                        "al", "an", "ar", "ch", "cr", "da", "de", "el", "em", "en", "ha",
+                        "ja", "jo", "ka", "ke", "ma", "mi", "mo", "pa", "ra", "ro", "sa",
+                        "sh", "si", "th", "to", "vi", "za"
+                    ]
+                    for q in prefixes:
+                        search_url = f"https://discord.com/api/v9/guilds/{guild.id}/members/search?query={q}&limit=100"
                         try:
-                            async with session.get(url) as resp:
-                                if resp.status != 200:
-                                    break
-                                raw_list = await resp.json()
-                                if not raw_list or not isinstance(raw_list, list):
-                                    break
+                            async with session.get(search_url) as resp:
+                                if resp.status == 200:
+                                    raw_list = await resp.json()
+                                    if raw_list and isinstance(raw_list, list):
+                                        batch = []
+                                        for rm in raw_list:
+                                            u = rm.get("user", {})
+                                            uid = str(u.get("id") or "")
+                                            if not uid:
+                                                continue
+                                            username = u.get("username", "Unknown")
+                                            display_name = u.get("global_name") or username
+                                            server_nick = rm.get("nick") or display_name
+                                            is_bot = bool(u.get("bot", False))
+                                            avatar = u.get("avatar")
+                                            avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
+                                            member_roles = [
+                                                role_map.get(int(rid), str(rid))
+                                                for rid in rm.get("roles", [])
+                                                if int(rid) in role_map
+                                            ]
+                                            batch.append({
+                                                "user_id": uid,
+                                                "username": username,
+                                                "display_name": display_name,
+                                                "server_nickname": server_nick,
+                                                "server_name": guild.name,
+                                                "channel_name": default_channel_str,
+                                                "assigned_roles": member_roles,
+                                                "is_bot": is_bot,
+                                                "presence_status": "offline",
+                                                "avatar_url": avatar_url,
+                                                "joined_at": rm.get("joined_at"),
+                                            })
+                                        if batch:
+                                            bulk_upsert_users(batch)
+                            await asyncio.sleep(0.12)
+                        except Exception:
+                            pass
 
-                                batch = []
-                                for rm in raw_list:
-                                    u = rm.get("user", {})
-                                    uid = str(u.get("id") or "")
-                                    if not uid:
-                                        continue
-                                    last_member_id = int(uid)
-
-                                    username = u.get("username", "Unknown")
-                                    display_name = u.get("global_name") or username
-                                    server_nick = rm.get("nick") or display_name
-                                    is_bot = bool(u.get("bot", False))
-                                    avatar = u.get("avatar")
-                                    avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
-                                    member_roles = [
-                                        role_map.get(int(rid), str(rid))
-                                        for rid in rm.get("roles", [])
-                                        if int(rid) in role_map
-                                    ]
-
-                                    batch.append({
-                                        "user_id": uid,
-                                        "username": username,
-                                        "display_name": display_name,
-                                        "server_nickname": server_nick,
-                                        "server_name": guild.name,
-                                        "channel_name": channel_str,
-                                        "assigned_roles": member_roles,
-                                        "is_bot": is_bot,
-                                        "presence_status": "offline",
-                                        "avatar_url": avatar_url,
-                                        "joined_at": rm.get("joined_at"),
-                                    })
-
-                                if batch:
-                                    bulk_upsert_users(batch)
-                                    total_rest_indexed += len(batch)
-
-                                if len(raw_list) < 1000:
-                                    break
-
-                                await asyncio.sleep(0.3)
-                        except Exception as exc:
-                            logger.debug("REST member pagination error for %s: %s", guild.name, exc)
-                            break
-
-                    # 3. Alphabetical Search Scraping fallback for user accounts
-                    if total_rest_indexed == 0:
-                        search_chars = list("abcdefghijklmnopqrstuvwxyz0123456789_")
-                        for char in search_chars:
-                            search_url = f"https://discord.com/api/v9/guilds/{guild.id}/members/search?query={char}&limit=100"
-                            try:
-                                async with session.get(search_url) as resp:
-                                    if resp.status == 200:
-                                        raw_list = await resp.json()
-                                        if raw_list and isinstance(raw_list, list):
-                                            batch = []
-                                            for rm in raw_list:
-                                                u = rm.get("user", {})
-                                                uid = str(u.get("id") or "")
-                                                if not uid:
-                                                    continue
-                                                username = u.get("username", "Unknown")
-                                                display_name = u.get("global_name") or username
-                                                server_nick = rm.get("nick") or display_name
-                                                is_bot = bool(u.get("bot", False))
-                                                avatar = u.get("avatar")
-                                                avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
-                                                member_roles = [
-                                                    role_map.get(int(rid), str(rid))
-                                                    for rid in rm.get("roles", [])
-                                                    if int(rid) in role_map
-                                                ]
-                                                batch.append({
-                                                    "user_id": uid,
-                                                    "username": username,
-                                                    "display_name": display_name,
-                                                    "server_nickname": server_nick,
-                                                    "server_name": guild.name,
-                                                    "channel_name": channel_str,
-                                                    "assigned_roles": member_roles,
-                                                    "is_bot": is_bot,
-                                                    "presence_status": "offline",
-                                                    "avatar_url": avatar_url,
-                                                    "joined_at": rm.get("joined_at"),
-                                                })
-                                            if batch:
-                                                bulk_upsert_users(batch)
-                                await asyncio.sleep(0.2)
-                            except Exception:
-                                pass
-
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
         except Exception as exc:
             logger.warning("Background user sync warning: %s", exc)
         finally:
@@ -1700,6 +1701,16 @@ class CommandCenterClient(discord.Client):
         self.discord_last_error = None
         logger.info("Discord gateway connected.")
 
+    async def _member_sync_loop(self):
+        """Runs periodic member sync every 10 minutes to continuously discover new members."""
+        await asyncio.sleep(10)  # Initial wait
+        while True:
+            try:
+                await self._sync_guild_members_to_db()
+            except Exception as e:
+                logger.debug("Periodic member sync loop notice: %s", e)
+            await asyncio.sleep(600)  # Repeat every 10 minutes
+
     async def on_disconnect(self):
         self.discord_disconnect_seen_at = _utc_now_iso()
         if not self.is_ready():
@@ -1737,8 +1748,8 @@ class CommandCenterClient(discord.Client):
                         logger.warning(f"Could not subscribe to guild '{guild.name}': {e}")
                     break
 
-        # Passively scan and sync all server members into MongoDB
-        asyncio.create_task(self._sync_guild_members_to_db())
+        # Passively scan and sync all server members into MongoDB & start background loop
+        asyncio.create_task(self._member_sync_loop())
 
     async def on_message(self, message: discord.Message):
         await process_message(self, message)

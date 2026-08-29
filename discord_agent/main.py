@@ -18,6 +18,8 @@ from database import (
     release_reply_slot,
     save_reply_for_message,
 )
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -25,7 +27,7 @@ from aiohttp import ClientSession, web
 
 from mass_dm_manager import mass_dm_manager
 
-from config import DISCORD_TOKEN
+from config import DISCORD_TOKEN, ADMIN_PASSWORD
 from config_manager import config_manager
 from discord_permissions import (
     can_send_messages,
@@ -33,6 +35,41 @@ from discord_permissions import (
     is_restricted_text_channel,
 )
 from message_listener import process_message
+
+def generate_auth_token(password: str) -> str:
+    return hmac.new(password.encode("utf-8"), b"discord_command_center_auth_v1", hashlib.sha256).hexdigest()
+
+@web.middleware
+async def auth_middleware(request, handler):
+    # Allow public UI shells, auth endpoints, and CORS preflight
+    public_paths = {"/", "/messages", "/api/auth/login", "/api/auth/check"}
+    if request.path in public_paths or request.method == "OPTIONS":
+        return await handler(request)
+
+    # Check Authorization header (Bearer <token>), cookie, or query param
+    auth_header = request.headers.get("Authorization", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split("Bearer ", 1)[1].strip()
+    elif "token" in request.query:
+        token = request.query.get("token", "")
+    elif "auth_token" in request.cookies:
+        token = request.cookies.get("auth_token", "")
+
+    # Also allow X-Admin-Password header
+    admin_pw = request.headers.get("X-Admin-Password")
+    if admin_pw and admin_pw == ADMIN_PASSWORD:
+        return await handler(request)
+
+    expected = generate_auth_token(ADMIN_PASSWORD)
+    if not token or not hmac.compare_digest(token, expected):
+        return web.json_response(
+            {"error": "Unauthorized. Please enter Admin Password to access Discord Command Center."},
+            status=401,
+            headers=CORS_HEADERS,
+        )
+
+    return await handler(request)
 from market_image_renderer import (
     generate_visual_style_for_market,
     parse_market_data,
@@ -327,10 +364,13 @@ class CommandCenterClient(discord.Client):
     # ── Web Server ─────────────────────────────────────────────
 
     async def start_web_server(self):
-        app = web.Application()
+        app = web.Application(middlewares=[auth_middleware])
         app.add_routes([
-            # Dashboard
-            web.get("/",  self.handle_dashboard),
+            # Dashboard Shell
+            web.get("/",                                  self.handle_dashboard),
+            # Auth
+            web.post("/api/auth/login",                   self.handle_post_auth_login),
+            web.get("/api/auth/check",                    self.handle_get_auth_check),
             # Status & data reads
             web.get("/api/status",                        self.handle_get_status),
             web.get("/api/messages",                      self.handle_get_messages),
@@ -386,6 +426,35 @@ class CommandCenterClient(discord.Client):
                 text="<h1>Dashboard not found.</h1><p>Make sure dashboard.html exists next to main.py.</p>",
                 status=404,
             )
+
+    async def handle_post_auth_login(self, request):
+        """Verify admin password and return secure session token."""
+        try:
+            data = await request.json()
+            pwd = str(data.get("password", "")).strip()
+            if not pwd or not hmac.compare_digest(pwd, ADMIN_PASSWORD):
+                return web.json_response({"error": "Incorrect admin password. Please try again."}, status=401, headers=CORS_HEADERS)
+
+            token = generate_auth_token(ADMIN_PASSWORD)
+            resp = web.json_response({"success": True, "token": token}, headers=CORS_HEADERS)
+            resp.set_cookie("auth_token", token, max_age=86400 * 30, httponly=True, samesite="Lax")
+            return resp
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=CORS_HEADERS)
+
+    async def handle_get_auth_check(self, request):
+        """Check if request contains valid auth token."""
+        auth_header = request.headers.get("Authorization", "")
+        token = ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split("Bearer ", 1)[1].strip()
+        elif "token" in request.query:
+            token = request.query.get("token", "")
+        elif "auth_token" in request.cookies:
+            token = request.cookies.get("auth_token", "")
+
+        valid = bool(token and hmac.compare_digest(token, generate_auth_token(ADMIN_PASSWORD)))
+        return web.json_response({"authenticated": valid}, headers=CORS_HEADERS)
 
     async def handle_get_status(self, request):
         """Return bot connection status and basic info."""

@@ -30,6 +30,7 @@ if not DISCORD_TOKEN:
 CONTROL_SERVER_ID = int(os.getenv("CONTROL_SERVER_ID", "0"))
 CONTROL_CHANNEL_ID = int(os.getenv("CONTROL_CHANNEL_ID", "0"))
 OPENAI_API_KEY = _clean_env_value("OPENAI_API_KEY")
+ADMIN_PASSWORD = _clean_env_value("ADMIN_PASSWORD") or "admin123"
 
 if not CONTROL_SERVER_ID or not CONTROL_CHANNEL_ID:
     logging.error("CONTROL_SERVER_ID or CONTROL_CHANNEL_ID is missing.")

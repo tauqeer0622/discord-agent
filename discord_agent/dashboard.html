@@ -595,12 +595,47 @@
     .status-chip.stopped{background:rgba(239,68,68,.15);color:var(--red-l);border:1px solid rgba(239,68,68,.3)}
     .status-chip.completed{background:rgba(124,58,237,.15);color:var(--purple-l);border:1px solid rgba(124,58,237,.3)}
 
+    /* ── Auth Lock Screen ───────────────────────────────────────── */
+    #authOverlay{position:fixed;inset:0;background:rgba(6,8,15,.96);backdrop-filter:blur(16px);z-index:99999;display:none;align-items:center;justify-content:center;padding:1.5rem}
+    #authOverlay.locked{display:flex}
+    .auth-card{width:100%;max-width:440px;background:#0d111c;border:1px solid rgba(124,58,237,.35);box-shadow:0 24px 80px rgba(0,0,0,.8),0 0 40px rgba(124,58,237,.15);border-radius:20px;padding:2.5rem 2rem;display:flex;flex-direction:column;align-items:center;text-align:center;gap:1.25rem;animation:modalPop .3s ease-out}
+    .auth-logo-mark{width:56px;height:56px;border-radius:16px;background:linear-gradient(135deg,var(--purple),var(--blue-l));display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 8px 24px rgba(124,58,237,.4)}
+    .auth-title{font-size:1.4rem;font-weight:800;color:var(--text);letter-spacing:-.02em}
+    .auth-sub{font-size:.85rem;color:var(--text3);line-height:1.4}
+    .auth-form{width:100%;display:flex;flex-direction:column;gap:1rem;margin-top:.5rem}
+    .auth-input-wrap{position:relative;width:100%}
+    .auth-input{width:100%;padding:14px 44px 14px 16px;background:rgba(255,255,255,.05);border:1px solid var(--border-h);border-radius:12px;color:var(--text);font-size:.95rem;outline:none;transition:border-color .15s}
+    .auth-input:focus{border-color:var(--purple-l);box-shadow:0 0 0 3px rgba(124,58,237,.2)}
+    .auth-eye{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px}
+    .auth-btn{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--purple),#6366f1);color:#fff;font-size:.95rem;font-weight:800;cursor:pointer;transition:opacity .15s;box-shadow:0 8px 24px rgba(124,58,237,.35)}
+    .auth-btn:hover{opacity:.9}
+    .auth-btn:disabled{opacity:.4;cursor:not-allowed}
+
     /* ── Responsive ──────────────────────────────────────────────── */
     @media(max-width:1100px){.grid,.cfg-grid,.cmp-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
     @media(max-width:768px){.stats,.cfg-stats{grid-template-columns:repeat(2,1fr)}.user-cards{grid-template-columns:1fr}#header{padding:0 1rem}#main{padding:1rem 1rem 3rem}.tbl-head,.tbl-row{grid-template-columns:120px 1fr 100px}}
   </style>
 </head>
 <body>
+
+<!-- ── Auth Lock Screen ────────────────────────────────────────── -->
+<div id="authOverlay">
+  <div class="auth-card">
+    <div class="auth-logo-mark">⚡</div>
+    <div>
+      <div class="auth-title">Discord Command Center</div>
+      <div class="auth-sub">Access is restricted. Enter Admin Password to continue.</div>
+    </div>
+    <form class="auth-form" onsubmit="event.preventDefault(); submitLogin();">
+      <div class="auth-input-wrap">
+        <input type="password" id="authPasswordInput" class="auth-input" placeholder="Enter admin password…" autocomplete="current-password" autofocus>
+        <button type="button" class="auth-eye" onclick="togglePasswordVisibility()" title="Show/hide password">👁️</button>
+      </div>
+      <div class="form-msg" id="authErrorMsg" style="text-align:left"></div>
+      <button type="submit" class="auth-btn" id="btnAuthSubmit">🔓 Unlock Dashboard</button>
+    </form>
+  </div>
+</div>
 
 <!-- ── Header ──────────────────────────────────────────────────── -->
 <header id="header">
@@ -628,6 +663,9 @@
       <div class="tog-opt" id="optUser"  onclick="setMode('user')">User</div>
       <div class="tog-opt" id="optAdmin" onclick="setMode('admin')">Admin</div>
     </div>
+    <button type="button" id="btnLogout" onclick="logoutAdmin()" style="display:none;padding:7px 12px;border-radius:8px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.1);color:var(--red-l);font-size:13px;font-weight:700;cursor:pointer" title="Lock dashboard & logout">
+      🚪 Logout
+    </button>
   </div>
 </header>
 
@@ -1098,6 +1136,116 @@
 </div>
 
 <script>
+/* ── Auth Interceptor & Session ──────────────────────────────── */
+let authToken = localStorage.getItem('ccAuthToken') || '';
+
+// Automatically attach Authorization header to all fetch requests
+const _originalFetch = window.fetch;
+window.fetch = async function(url, options = {}) {
+  options = options || {};
+  options.headers = options.headers || {};
+  if (authToken) {
+    if (options.headers instanceof Headers) {
+      if (!options.headers.has('Authorization')) {
+        options.headers.set('Authorization', `Bearer ${authToken}`);
+      }
+    } else if (Array.isArray(options.headers)) {
+      options.headers.push(['Authorization', `Bearer ${authToken}`]);
+    } else {
+      if (!options.headers['Authorization']) {
+        options.headers['Authorization'] = `Bearer ${authToken}`;
+      }
+    }
+  }
+
+  const response = await _originalFetch(url, options);
+
+  // If unauthorized, pop the lock screen
+  if (response.status === 401 && typeof url === 'string' && !url.includes('/api/auth/login')) {
+    lockDashboard('Session expired or unauthorized. Please log in.');
+  }
+
+  return response;
+};
+
+function lockDashboard(msg = '') {
+  authToken = '';
+  localStorage.removeItem('ccAuthToken');
+  const overlay = $('authOverlay');
+  const errEl = $('authErrorMsg');
+  const btnLogout = $('btnLogout');
+  if (overlay) overlay.classList.add('locked');
+  if (btnLogout) btnLogout.style.display = 'none';
+  if (errEl && msg) {
+    errEl.className = 'form-msg err';
+    errEl.textContent = msg;
+  }
+  const input = $('authPasswordInput');
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 100);
+  }
+}
+
+function unlockDashboard(token) {
+  authToken = token;
+  localStorage.setItem('ccAuthToken', token);
+  const overlay = $('authOverlay');
+  const btnLogout = $('btnLogout');
+  if (overlay) overlay.classList.remove('locked');
+  if (btnLogout) btnLogout.style.display = 'block';
+  const errEl = $('authErrorMsg');
+  if (errEl) errEl.textContent = '';
+}
+
+function togglePasswordVisibility() {
+  const input = $('authPasswordInput');
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+async function submitLogin() {
+  const input = $('authPasswordInput');
+  const btn = $('btnAuthSubmit');
+  const errEl = $('authErrorMsg');
+  const pwd = (input?.value || '').trim();
+
+  if (!pwd) {
+    errEl.className = 'form-msg err';
+    errEl.textContent = 'Please enter the admin password.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying…';
+  errEl.className = 'form-msg';
+  errEl.textContent = 'Authenticating…';
+
+  try {
+    const res = await _originalFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Authentication failed');
+
+    unlockDashboard(data.token);
+    refresh();
+    syncBulkPromoStatus();
+  } catch (err) {
+    errEl.className = 'form-msg err';
+    errEl.textContent = `❌ ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔓 Unlock Dashboard';
+  }
+}
+
+function logoutAdmin() {
+  lockDashboard('You have been logged out.');
+}
+
 /* ── Constants ───────────────────────────────────────────────── */
 const REFRESH_MS = 5000;
 
@@ -2660,6 +2808,15 @@ async function controlCampaign(action){
 window.addEventListener('load',()=>{
   setMode(mode);
   setTab(tab);
+  
+  if(!authToken){
+    lockDashboard();
+  } else {
+    unlockDashboard(authToken);
+    refresh();
+    syncBulkPromoStatus();
+  }
+
   document.addEventListener('input',(e)=>{
       if(e.target.id==='messageSearch'){
           renderMessages(cache.messages);
@@ -2688,9 +2845,10 @@ window.addEventListener('load',()=>{
           $('btnBulkSend').disabled=true;
       }
   });
-  refresh();
-  syncBulkPromoStatus();
-  setInterval(refresh,REFRESH_MS);
+  
+  setInterval(() => {
+    if (authToken) refresh();
+  }, REFRESH_MS);
 });
 </script>
 </body>

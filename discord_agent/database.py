@@ -748,3 +748,60 @@ def get_all_user_servers():
     """Return distinct server names where indexed users exist."""
     collection = get_collection("discord_users")
     return sorted([s for s in collection.distinct("servers") if s])
+
+
+def get_campaign_target_users(server=None, user_type="human"):
+    """Fetch all matching target users for a mass DM campaign."""
+    collection = get_collection("discord_users")
+    query = {}
+    if server and server != "all":
+        query["servers"] = server
+    if user_type == "human":
+        query["is_bot"] = False
+    elif user_type == "bot":
+        query["is_bot"] = True
+
+    cursor = collection.find(query, {
+        "_id": 0,
+        "user_id": 1,
+        "username": 1,
+        "display_name": 1,
+        "server_nickname": 1,
+        "servers": 1,
+        "server_name": 1,
+        "is_bot": 1,
+    })
+
+    return list(cursor)
+
+
+def get_campaign_target_count(server=None, user_type="human"):
+    """Get the total count of target members for a preview."""
+    collection = get_collection("discord_users")
+    query = {}
+    if server and server != "all":
+        query["servers"] = server
+    if user_type == "human":
+        query["is_bot"] = False
+    elif user_type == "bot":
+        query["is_bot"] = True
+
+    return collection.count_documents(query)
+
+
+def save_campaign_record(campaign_data):
+    """Save or update campaign state in MongoDB."""
+    collection = get_collection("dm_campaigns")
+    cid = campaign_data.get("id")
+    if not cid:
+        return
+    collection.update_one({"id": cid}, {"$set": campaign_data}, upsert=True)
+
+
+def get_latest_campaign_record():
+    """Fetch the latest campaign state."""
+    collection = get_collection("dm_campaigns")
+    doc = collection.find_one(sort=[("updated_at", -1)])
+    if doc:
+        doc.pop("_id", None)
+    return doc

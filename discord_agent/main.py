@@ -11,6 +11,7 @@ from database import (
     acquire_reply_slot,
     bulk_upsert_users,
     get_all_user_servers,
+    get_campaign_target_count,
     get_message_by_id,
     get_messages,
     get_paginated_users,
@@ -21,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 
 import discord
 from aiohttp import ClientSession, web
+
+from mass_dm_manager import mass_dm_manager
 
 from config import DISCORD_TOKEN
 from config_manager import config_manager
@@ -319,6 +322,7 @@ class CommandCenterClient(discord.Client):
         self.discord_disconnect_seen_at = None
         self.discord_last_error = None
         self.discord_auth_probe = None
+        mass_dm_manager.set_client(self)
 
     # ── Web Server ─────────────────────────────────────────────
 
@@ -337,6 +341,11 @@ class CommandCenterClient(discord.Client):
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
             web.get("/api/guilds",                        self.handle_get_guilds),
+            # Mass DM Broadcast Campaign
+            web.get("/api/campaign/target-count",         self.handle_get_campaign_target_count),
+            web.post("/api/campaign/start",               self.handle_post_campaign_start),
+            web.get("/api/campaign/status",              self.handle_get_campaign_status),
+            web.post("/api/campaign/control",             self.handle_post_campaign_control),
             # Config CRUD
             web.get("/api/configs",                       self.handle_get_configs),
             web.post("/api/configs",                      self.handle_post_config),
@@ -1667,6 +1676,67 @@ class CommandCenterClient(discord.Client):
         except Exception as e:
             logger.error("handle_post_user_dm error: %s", e)
             return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    # ── Mass DM Campaign Handlers ──────────────────────────────
+
+    async def handle_get_campaign_target_count(self, request):
+        """Get target member count for selected server and type."""
+        server = request.query.get("server")
+        user_type = request.query.get("type", "human")
+        count = get_campaign_target_count(server=server, user_type=user_type)
+        return web.json_response({"server": server or "All Servers", "user_type": user_type, "count": count}, headers=CORS_HEADERS)
+
+    async def handle_post_campaign_start(self, request):
+        """Launch a new mass DM broadcast campaign."""
+        try:
+            data = await request.json()
+            server_name = data.get("server")
+            user_type = data.get("user_type", "human")
+            message_template = str(data.get("message", "")).strip()
+            delay_mode = data.get("delay_mode", "safe")
+
+            image_data_b64 = data.get("image_data")
+            image_filename = data.get("image_filename", "promo.png")
+            image_bytes = None
+            if image_data_b64:
+                if "," in image_data_b64:
+                    image_data_b64 = image_data_b64.split(",", 1)[1]
+                image_bytes = base64.b64decode(image_data_b64)
+
+            status = mass_dm_manager.start_campaign(
+                server_name=server_name,
+                user_type=user_type,
+                message_template=message_template,
+                image_bytes=image_bytes,
+                image_filename=image_filename,
+                delay_mode=delay_mode,
+            )
+            return web.json_response(status, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_post_campaign_start error: %s", exc)
+            return web.json_response({"error": str(exc)}, status=400, headers=CORS_HEADERS)
+
+    async def handle_get_campaign_status(self, request):
+        """Get current mass DM campaign status and delivery metrics."""
+        status = mass_dm_manager.get_status()
+        return web.json_response(status, headers=CORS_HEADERS)
+
+    async def handle_post_campaign_control(self, request):
+        """Pause, resume, or cancel the active mass DM campaign."""
+        try:
+            data = await request.json()
+            action = data.get("action")
+            if action == "pause":
+                status = mass_dm_manager.pause_campaign()
+            elif action == "resume":
+                status = mass_dm_manager.resume_campaign()
+            elif action == "stop":
+                status = mass_dm_manager.stop_campaign()
+            else:
+                return web.json_response({"error": "Invalid action. Use 'pause', 'resume', or 'stop'."}, status=400, headers=CORS_HEADERS)
+            return web.json_response(status, headers=CORS_HEADERS)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=CORS_HEADERS)
 
     async def handle_get_memory(self, request):
         """Return the AI conversation memory file."""

@@ -564,8 +564,39 @@
     .modal-target-card{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--border)}
     .modal-footer{padding:1rem 1.5rem;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:.75rem}
 
+    /* ── Mass DM Campaign Tab ───────────────────────────────────── */
+    .cmp-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start}
+    .var-pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+    .btn-var{padding:4px 9px;border-radius:6px;border:1px solid rgba(124,58,237,.3);background:rgba(124,58,237,.12);color:var(--purple-l);font-size:.72rem;font-weight:700;cursor:pointer;transition:all .15s}
+    .btn-var:hover{background:rgba(124,58,237,.25);border-color:var(--purple-l)}
+    
+    .cmp-audience-badge{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25);color:var(--blue-l);font-size:.82rem;font-weight:700}
+    
+    .cmp-progress-box{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:14px;padding:1.25rem;display:flex;flex-direction:column;gap:.75rem}
+    .cmp-progress-track{width:100%;height:10px;border-radius:100px;background:rgba(255,255,255,.07);overflow:hidden}
+    .cmp-progress-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--purple),var(--blue-l));width:0%;transition:width .3s ease}
+    
+    .cmp-metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-top:.5rem}
+    .cmp-metric-tile{background:#0c0f18;border:1px solid var(--border);border-radius:10px;padding:10px 12px;text-align:center}
+    .cmp-metric-val{font-size:1.25rem;font-weight:800;color:var(--text)}
+    .cmp-metric-lbl{font-size:.65rem;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+    
+    .cmp-console{height:260px;overflow-y:auto;background:#07090f;border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-family:monospace;font-size:.75rem;display:flex;flex-direction:column;gap:5px}
+    .cmp-log-line{display:flex;gap:8px;line-height:1.4}
+    .cmp-log-time{color:var(--text3);white-space:nowrap}
+    .cmp-log-txt{color:var(--text2);word-break:break-word}
+    .cmp-log-txt.warn{color:var(--amber-l)}
+    .cmp-log-txt.err{color:var(--red-l)}
+    
+    .status-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:100px;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+    .status-chip.running{background:rgba(34,197,94,.15);color:var(--green-l);border:1px solid rgba(34,197,94,.3)}
+    .status-chip.paused{background:rgba(245,158,11,.15);color:var(--amber-l);border:1px solid rgba(245,158,11,.3)}
+    .status-chip.idle{background:rgba(100,116,139,.15);color:var(--text3);border:1px solid rgba(100,116,139,.3)}
+    .status-chip.stopped{background:rgba(239,68,68,.15);color:var(--red-l);border:1px solid rgba(239,68,68,.3)}
+    .status-chip.completed{background:rgba(124,58,237,.15);color:var(--purple-l);border:1px solid rgba(124,58,237,.3)}
+
     /* ── Responsive ──────────────────────────────────────────────── */
-    @media(max-width:1100px){.grid,.cfg-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
+    @media(max-width:1100px){.grid,.cfg-grid,.cmp-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
     @media(max-width:768px){.stats,.cfg-stats{grid-template-columns:repeat(2,1fr)}.user-cards{grid-template-columns:1fr}#header{padding:0 1rem}#main{padding:1rem 1rem 3rem}.tbl-head,.tbl-row{grid-template-columns:120px 1fr 100px}}
   </style>
 </head>
@@ -654,6 +685,7 @@
       <div class="tab on" id="tabOverview"        onclick="setTab('overview')">📊 Overview</div>
       <div class="tab"    id="tabConfigurations"  onclick="setTab('configurations')">⚙️ Configurations</div>
       <div class="tab"    id="tabUsers"           onclick="setTab('users')">👥 Users</div>
+      <div class="tab"    id="tabCampaign"        onclick="setTab('campaign')">📢 Mass DM Broadcast</div>
     </div>
 
     <!-- ── OVERVIEW TAB ─────────────────────────────────────── -->
@@ -877,6 +909,160 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── MASS DM BROADCAST CAMPAIGN TAB ───────────────────── -->
+    <div id="tabPanelCampaign" style="display:none">
+      <div class="cmp-grid">
+        
+        <!-- Left: Campaign Creator -->
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">📢 Compose Server DM Broadcast</span>
+            <span class="pill" id="cmpPill">Direct Inbox Delivery</span>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:1.1rem">
+            
+            <!-- Target Server Selection -->
+            <div class="form-group">
+              <label class="form-label" for="cmpTargetServer">Target Server</label>
+              <select class="form-select" id="cmpTargetServer" onchange="updateCampaignAudienceCount()">
+                <option value="all">🌐 All Joined Servers (Global Audience)</option>
+              </select>
+            </div>
+
+            <!-- Audience Preview Badge -->
+            <div class="cmp-audience-badge" id="cmpAudienceBadge">
+              <span>👥</span>
+              <span id="cmpAudienceTxt">Targeting: Calculating members…</span>
+            </div>
+
+            <!-- Target Type Selection -->
+            <div class="form-group">
+              <label class="form-label" for="cmpTargetType">Target Audience Filter</label>
+              <select class="form-select" id="cmpTargetType" onchange="updateCampaignAudienceCount()">
+                <option value="human" selected>👤 Humans Only (Exclude bots & system accounts)</option>
+                <option value="all">👥 All Members (Humans & Bots)</option>
+              </select>
+            </div>
+
+            <!-- Message Composer with Personalization Variables -->
+            <div class="form-group">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <label class="form-label" for="cmpMessageText">Direct Message Content</label>
+                <span style="font-size:.7rem;color:var(--text3)">Personalize with tags</span>
+              </div>
+              <textarea class="form-textarea" id="cmpMessageText" style="min-height:130px" placeholder="Hey {display_name}! We just dropped our new market analysis and private signals for {server_name}. Check it out below!"></textarea>
+              <div class="var-pills">
+                <button type="button" class="btn-var" onclick="insertCmpVar('{display_name}')">+ {display_name}</button>
+                <button type="button" class="btn-var" onclick="insertCmpVar('{username}')">+ {username}</button>
+                <button type="button" class="btn-var" onclick="insertCmpVar('{server_name}')">+ {server_name}</button>
+              </div>
+            </div>
+
+            <!-- Image Attachment Options -->
+            <div class="form-group">
+              <label class="form-label" for="cmpImageInput">Image Attachment (Optional)</label>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <input type="file" id="cmpImageInput" accept="image/*" style="display:none" onchange="handleCmpImageSelected()">
+                <button type="button" class="btn-secondary" onclick="$('cmpImageInput').click()" style="padding:7px 14px;font-size:.78rem">
+                  📁 Upload Banner / Photo
+                </button>
+                <span style="font-size:.75rem;color:var(--text3)" id="cmpImageName">No image selected</span>
+                <button type="button" id="btnCmpClearImage" class="btn-secondary" onclick="clearCmpImage()" style="display:none;padding:4px 8px;font-size:.72rem;color:var(--red-l)">✕ Remove</button>
+              </div>
+              <div id="cmpImagePreviewWrap" style="display:none;margin-top:10px;max-width:240px;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+                <img id="cmpImagePreview" style="width:100%;height:auto;display:block" alt="">
+              </div>
+            </div>
+
+            <!-- Safe Delivery Pacing -->
+            <div class="form-group">
+              <label class="form-label" for="cmpPacingMode">Anti-Spam Delivery Speed</label>
+              <select class="form-select" id="cmpPacingMode">
+                <option value="safe" selected>🛡️ Safe (30-60s randomized jitter) — Recommended</option>
+                <option value="balanced">⚡ Balanced (10-20s delay)</option>
+                <option value="stealth">🐢 Stealth (60-120s slow human pace)</option>
+              </select>
+            </div>
+
+            <div class="form-msg" id="cmpFormMsg"></div>
+
+            <button type="button" class="btn-primary" id="btnStartCampaign" onclick="startMassCampaign()" style="margin-top:.5rem;padding:12px;font-size:.9rem">
+              🚀 Launch Server DM Broadcast
+            </button>
+
+          </div>
+        </div>
+
+        <!-- Right: Live Monitor & Activity Feed -->
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">📡 Live Broadcast Monitor</span>
+            <span class="status-chip idle" id="cmpStatusChip">● IDLE</span>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:1.1rem">
+            
+            <!-- Progress Bar -->
+            <div class="cmp-progress-box">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:.82rem;font-weight:700">
+                <span id="cmpProgressLabel">Broadcast Progress</span>
+                <span id="cmpProgressPct" style="color:var(--purple-l)">0%</span>
+              </div>
+              <div class="cmp-progress-track">
+                <div class="cmp-progress-fill" id="cmpProgressFill"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:.75rem;color:var(--text3)">
+                <span id="cmpCurrentTargetText">Ready to dispatch</span>
+                <span id="cmpPacingTimerText">—</span>
+              </div>
+            </div>
+
+            <!-- Key Metrics Grid -->
+            <div class="cmp-metrics-grid">
+              <div class="cmp-metric-tile">
+                <div class="cmp-metric-val" id="cmpStatTotal" style="color:var(--blue-l)">0</div>
+                <div class="cmp-metric-lbl">Total Targets</div>
+              </div>
+              <div class="cmp-metric-tile">
+                <div class="cmp-metric-val" id="cmpStatSent" style="color:var(--green-l)">0</div>
+                <div class="cmp-metric-lbl">Delivered</div>
+              </div>
+              <div class="cmp-metric-tile">
+                <div class="cmp-metric-val" id="cmpStatSkipped" style="color:var(--amber-l)">0</div>
+                <div class="cmp-metric-lbl">Skipped (Closed)</div>
+              </div>
+              <div class="cmp-metric-tile">
+                <div class="cmp-metric-val" id="cmpStatFailed" style="color:var(--red-l)">0</div>
+                <div class="cmp-metric-lbl">Failed</div>
+              </div>
+            </div>
+
+            <!-- Campaign Controls -->
+            <div style="display:flex;gap:10px;align-items:center">
+              <button type="button" class="btn-secondary" id="btnCmpPause" onclick="controlCampaign('pause')" style="flex:1;display:none">
+                ⏸️ Pause
+              </button>
+              <button type="button" class="btn-secondary" id="btnCmpResume" onclick="controlCampaign('resume')" style="flex:1;display:none;background:rgba(34,197,94,.15);color:var(--green-l);border-color:rgba(34,197,94,.3)">
+                ▶️ Resume
+              </button>
+              <button type="button" class="btn-secondary" id="btnCmpStop" onclick="controlCampaign('stop')" style="flex:1;display:none;background:rgba(239,68,68,.15);color:var(--red-l);border-color:rgba(239,68,68,.3)">
+                ⏹️ Stop Campaign
+              </button>
+            </div>
+
+            <!-- Real-Time Activity Log Feed -->
+            <div class="form-group" style="margin-top:.25rem">
+              <label class="form-label">Real-Time Delivery Feed</label>
+              <div class="cmp-console" id="cmpConsoleLogs">
+                <div class="cmp-log-line"><span class="cmp-log-time">[--:--:--]</span><span class="cmp-log-txt">Waiting for broadcast launch...</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1162,11 +1348,14 @@ function setTab(t){
   $('tabOverview').classList.toggle('on', t==='overview');
   $('tabConfigurations').classList.toggle('on', t==='configurations');
   $('tabUsers').classList.toggle('on', t==='users');
+  $('tabCampaign').classList.toggle('on', t==='campaign');
   $('tabPanelOverview').style.display        = t==='overview'       ? '' : 'none';
   $('tabPanelConfigurations').style.display  = t==='configurations' ? '' : 'none';
   $('tabPanelUsers').style.display           = t==='users'          ? '' : 'none';
+  $('tabPanelCampaign').style.display        = t==='campaign'       ? '' : 'none';
   if(t==='configurations') loadGuilds();
   if(t==='users') { loadGuilds(); loadUsers(); }
+  if(t==='campaign') { loadCampaignServers(); updateCampaignAudienceCount(); pollCampaignStatus(); }
 }
 
 /* ── Status pill ─────────────────────────────────────────────── */
@@ -2239,6 +2428,231 @@ async function sendQuickDm(){
     msgEl.textContent = `❌ ${err.message}`;
     btn.disabled = false;
     btn.textContent = 'Try Again';
+  }
+}
+
+/* ── Mass DM Campaign Logic ──────────────────────────────────── */
+let cmpImageBase64 = null;
+let cmpImageFileName = null;
+let cmpPollInterval = null;
+
+async function loadCampaignServers(){
+  const sel = $('cmpTargetServer');
+  if(!sel) return;
+  const curr = sel.value;
+  try{
+    const res = await fetch('/api/users/servers');
+    if(res.ok){
+      const servers = await res.json();
+      sel.innerHTML = '<option value="all">🌐 All Joined Servers (Global Audience)</option>' + servers.map(s => `<option value="${esc(s)}">🌐 ${esc(s)}</option>`).join('');
+      if(curr) sel.value = curr;
+    }
+  }catch(e){
+    console.debug('Failed to load campaign servers:', e);
+  }
+}
+
+async function updateCampaignAudienceCount(){
+  const server = $('cmpTargetServer')?.value || 'all';
+  const type = $('cmpTargetType')?.value || 'human';
+  const badgeTxt = $('cmpAudienceTxt');
+  const pill = $('cmpPill');
+  if(badgeTxt) badgeTxt.textContent = 'Calculating members…';
+
+  try{
+    const res = await fetch(`/api/campaign/target-count?server=${encodeURIComponent(server)}&type=${encodeURIComponent(type)}`);
+    if(res.ok){
+      const data = await res.json();
+      const count = Number(data.count || 0).toLocaleString();
+      const sName = server === 'all' ? 'All Servers' : server;
+      const tLabel = type === 'human' ? 'Human Members' : 'Total Members';
+      if(badgeTxt) badgeTxt.textContent = `Targeting: ${count} ${tLabel} in ${sName}`;
+      if(pill) pill.textContent = `${count} Targets`;
+    }
+  }catch(e){
+    if(badgeTxt) badgeTxt.textContent = 'Targeting: Ready';
+  }
+}
+
+function insertCmpVar(tag){
+  const txt = $('cmpMessageText');
+  if(!txt) return;
+  const start = txt.selectionStart;
+  const end = txt.selectionEnd;
+  const text = txt.value;
+  txt.value = text.substring(0, start) + tag + text.substring(end);
+  txt.focus();
+  txt.selectionStart = txt.selectionEnd = start + tag.length;
+}
+
+function handleCmpImageSelected(){
+  const input = $('cmpImageInput');
+  const file = input?.files?.[0];
+  if(!file) return;
+
+  cmpImageFileName = file.name;
+  if($('cmpImageName')) $('cmpImageName').textContent = `${file.name} (${Math.ceil(file.size / 1024)} KB)`;
+  if($('btnCmpClearImage')) $('btnCmpClearImage').style.display = 'inline-block';
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    cmpImageBase64 = e.target.result;
+    if($('cmpImagePreview')){
+      $('cmpImagePreview').src = cmpImageBase64;
+      $('cmpImagePreviewWrap').style.display = 'block';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearCmpImage(){
+  cmpImageBase64 = null;
+  cmpImageFileName = null;
+  if($('cmpImageInput')) $('cmpImageInput').value = '';
+  if($('cmpImageName')) $('cmpImageName').textContent = 'No image selected';
+  if($('btnCmpClearImage')) $('btnCmpClearImage').style.display = 'none';
+  if($('cmpImagePreviewWrap')) $('cmpImagePreviewWrap').style.display = 'none';
+}
+
+async function startMassCampaign(){
+  const msgEl = $('cmpFormMsg');
+  const btn = $('btnStartCampaign');
+  const server = $('cmpTargetServer')?.value || 'all';
+  const userType = $('cmpTargetType')?.value || 'human';
+  const message = ($('cmpMessageText')?.value || '').trim();
+  const pacing = $('cmpPacingMode')?.value || 'safe';
+
+  if(!message && !cmpImageBase64){
+    msgEl.className = 'form-msg err';
+    msgEl.textContent = 'Please enter a message or select an image to broadcast.';
+    return;
+  }
+
+  msgEl.className = 'form-msg';
+  msgEl.textContent = 'Initializing server broadcast…';
+  btn.disabled = true;
+  btn.textContent = 'Launching…';
+
+  try{
+    const res = await fetch('/api/campaign/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        server: server === 'all' ? null : server,
+        user_type: userType,
+        message: message,
+        image_data: cmpImageBase64,
+        image_filename: cmpImageFileName,
+        delay_mode: pacing
+      })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    msgEl.className = 'form-msg ok';
+    msgEl.textContent = '🚀 Campaign launched successfully!';
+    renderCampaignStatus(data);
+    startCampaignPolling();
+  }catch(err){
+    msgEl.className = 'form-msg err';
+    msgEl.textContent = `❌ ${err.message}`;
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🚀 Launch Server DM Broadcast';
+  }
+}
+
+async function pollCampaignStatus(){
+  try{
+    const res = await fetch('/api/campaign/status');
+    if(res.ok){
+      const data = await res.json();
+      renderCampaignStatus(data);
+      if(data.status === 'running' || data.status === 'paused'){
+        startCampaignPolling();
+      }
+    }
+  }catch(e){
+    console.debug('Campaign poll notice:', e);
+  }
+}
+
+function startCampaignPolling(){
+  if(cmpPollInterval) return;
+  cmpPollInterval = setInterval(async () => {
+    try{
+      const res = await fetch('/api/campaign/status');
+      if(res.ok){
+        const data = await res.json();
+        renderCampaignStatus(data);
+        if(data.status !== 'running' && data.status !== 'paused'){
+          clearInterval(cmpPollInterval);
+          cmpPollInterval = null;
+        }
+      }
+    }catch(e){}
+  }, 2000);
+}
+
+function renderCampaignStatus(state){
+  if(!state) return;
+  const status = state.status || 'idle';
+  const chip = $('cmpStatusChip');
+  if(chip){
+    chip.className = `status-chip ${status}`;
+    chip.textContent = `● ${status.toUpperCase()}`;
+  }
+
+  const pct = state.progress_percent || 0;
+  if($('cmpProgressPct')) $('cmpProgressPct').textContent = `${pct}%`;
+  if($('cmpProgressFill')) $('cmpProgressFill').style.width = `${pct}%`;
+  if($('cmpProgressLabel')) $('cmpProgressLabel').textContent = `Broadcast: ${Number(state.sent_count||0) + Number(state.skipped_count||0) + Number(state.failed_count||0)} / ${Number(state.total_targets||0)} Members`;
+
+  if($('cmpStatTotal')) $('cmpStatTotal').textContent = Number(state.total_targets || 0).toLocaleString();
+  if($('cmpStatSent')) $('cmpStatSent').textContent = Number(state.sent_count || 0).toLocaleString();
+  if($('cmpStatSkipped')) $('cmpStatSkipped').textContent = Number(state.skipped_count || 0).toLocaleString();
+  if($('cmpStatFailed')) $('cmpStatFailed').textContent = Number(state.failed_count || 0).toLocaleString();
+
+  // Control Buttons
+  if($('btnCmpPause')) $('btnCmpPause').style.display = status === 'running' ? 'block' : 'none';
+  if($('btnCmpResume')) $('btnCmpResume').style.display = status === 'paused' ? 'block' : 'none';
+  if($('btnCmpStop')) $('btnCmpStop').style.display = (status === 'running' || status === 'paused') ? 'block' : 'none';
+
+  if(state.current_target){
+    if($('cmpCurrentTargetText')) $('cmpCurrentTargetText').textContent = `Sending to @${state.current_target.username} (${state.current_target.display_name})`;
+  } else if(status === 'completed'){
+    if($('cmpCurrentTargetText')) $('cmpCurrentTargetText').textContent = '✅ Broadcast completed';
+  } else if(status === 'stopped'){
+    if($('cmpCurrentTargetText')) $('cmpCurrentTargetText').textContent = '⏹️ Broadcast stopped';
+  } else {
+    if($('cmpCurrentTargetText')) $('cmpCurrentTargetText').textContent = 'Ready to dispatch';
+  }
+
+  // Logs Console
+  const consoleEl = $('cmpConsoleLogs');
+  if(consoleEl && Array.isArray(state.logs)){
+    if(state.logs.length === 0){
+      consoleEl.innerHTML = '<div class="cmp-log-line"><span class="cmp-log-time">[--:--:--]</span><span class="cmp-log-txt">Waiting for broadcast launch...</span></div>';
+    } else {
+      consoleEl.innerHTML = state.logs.map(l => {
+        const cls = l.level === 'warning' ? 'warn' : (l.level === 'error' ? 'err' : '');
+        return `<div class="cmp-log-line"><span class="cmp-log-time">[${esc(l.time)}]</span><span class="cmp-log-txt ${cls}">${esc(l.text)}</span></div>`;
+      }).join('');
+    }
+  }
+}
+
+async function controlCampaign(action){
+  try{
+    const res = await fetch('/api/campaign/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action })
+    });
+    const data = await res.json();
+    renderCampaignStatus(data);
+  }catch(err){
+    console.error('Failed to control campaign:', err);
   }
 }
 

@@ -595,6 +595,18 @@
     .status-chip.stopped{background:rgba(239,68,68,.15);color:var(--red-l);border:1px solid rgba(239,68,68,.3)}
     .status-chip.completed{background:rgba(124,58,237,.15);color:var(--purple-l);border:1px solid rgba(124,58,237,.3)}
 
+    /* ── Server Member Coverage Breakdown ───────────────────────── */
+    .cov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-top:1rem}
+    .cov-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:14px;padding:1.1rem 1.25rem;display:flex;flex-direction:column;gap:.75rem;transition:border-color .15s}
+    .cov-card:hover{border-color:var(--border-h)}
+    .cov-head{display:flex;justify-content:space-between;align-items:center}
+    .cov-name{font-size:.9rem;font-weight:800;color:var(--text);display:flex;align-items:center;gap:8px}
+    .cov-pct-badge{font-size:.72rem;font-weight:800;padding:3px 8px;border-radius:100px;background:rgba(34,197,94,.15);color:var(--green-l);border:1px solid rgba(34,197,94,.3)}
+    .cov-pct-badge.warn{background:rgba(245,158,11,.15);color:var(--amber-l);border-color:rgba(245,158,11,.3)}
+    .cov-numbers{display:flex;justify-content:space-between;font-size:.75rem;color:var(--text3)}
+    .cov-track{width:100%;height:8px;border-radius:100px;background:rgba(255,255,255,.07);overflow:hidden}
+    .cov-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,var(--purple),var(--green-l));transition:width .3s ease}
+
     /* ── Auth Lock Screen ───────────────────────────────────────── */
     #authOverlay{position:fixed;inset:0;background:rgba(6,8,15,.96);backdrop-filter:blur(16px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:1.5rem}
     #authOverlay.hidden{display:none!important}
@@ -881,6 +893,27 @@
         <div class="stat c-done"><div class="stat-ico">👤</div><div class="stat-val" id="uStatHumans">0</div><div class="stat-lbl">Human Users</div></div>
         <div class="stat c-biz"><div class="stat-ico">🤖</div><div class="stat-val" id="uStatBots">0</div><div class="stat-lbl">Bot Accounts</div></div>
         <div class="stat c-urg"><div class="stat-ico">🟢</div><div class="stat-val" id="uStatOnline">0</div><div class="stat-lbl">Online Now</div></div>
+      </div>
+
+      <!-- Server Member Coverage & Accuracy Breakdown -->
+      <div class="card wide-card" style="margin-bottom:1.5rem">
+        <div class="card-head">
+          <div>
+            <span class="card-title">🌐 Server Member Coverage & Accuracy Breakdown</span>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Compare official Discord guild member totals against indexed database records</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="pill" id="covTotalPill" style="background:rgba(34,197,94,.15);color:var(--green-l);border-color:rgba(34,197,94,.3)">Coverage: Calculating…</span>
+            <button type="button" class="btn-secondary" onclick="loadServerCoverage()" style="padding:6px 12px;font-size:.75rem" title="Re-check official Discord server member counts">
+              🔄 Verify Live Counts
+            </button>
+          </div>
+        </div>
+        <div style="padding:1.25rem 1.5rem">
+          <div class="cov-grid" id="covGrid">
+            <div style="font-size:.8rem;color:var(--text3)">Loading server member coverage metrics…</div>
+          </div>
+        </div>
       </div>
 
       <div class="card wide-card">
@@ -1502,7 +1535,7 @@ function setTab(t){
   $('tabPanelUsers').style.display           = t==='users'          ? '' : 'none';
   $('tabPanelCampaign').style.display        = t==='campaign'       ? '' : 'none';
   if(t==='configurations') loadGuilds();
-  if(t==='users') { loadGuilds(); loadUsers(); }
+  if(t==='users') { loadGuilds(); loadUsers(); loadServerCoverage(); }
   if(t==='campaign') { loadCampaignServers(); updateCampaignAudienceCount(); pollCampaignStatus(); }
 }
 
@@ -2325,6 +2358,60 @@ async function loadUserServers(){
     }
   }catch(e){
     console.debug('Failed to load user servers list:', e);
+  }
+}
+
+async function loadServerCoverage(){
+  const grid = $('covGrid');
+  const pill = $('covTotalPill');
+  if(!grid) return;
+
+  try{
+    const res = await fetch('/api/users/server-coverage');
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    
+    if(pill && data.summary){
+      const totalOff = Number(data.summary.total_official || 0).toLocaleString();
+      const totalIdx = Number(data.summary.total_indexed || 0).toLocaleString();
+      const totalPct = data.summary.coverage_percent || 0;
+      pill.textContent = `Overall: ${totalIdx} / ${totalOff} Members (${totalPct}% Synced)`;
+    }
+
+    if(!data.servers || data.servers.length === 0){
+      grid.innerHTML = '<div style="font-size:.8rem;color:var(--text3)">No servers joined yet.</div>';
+      return;
+    }
+
+    grid.innerHTML = data.servers.map(s => {
+      const offCount = Number(s.official_count || 0).toLocaleString();
+      const idxCount = Number(s.indexed_count || 0).toLocaleString();
+      const pct = s.coverage_percent || 0;
+      const isComplete = pct >= 99.0;
+      const badgeCls = isComplete ? '' : 'warn';
+      const badgeTxt = isComplete ? '✅ 100% Synced' : `${pct}% Indexed`;
+      const iconHtml = s.icon_url 
+        ? `<img src="${esc(s.icon_url)}" style="width:24px;height:24px;border-radius:6px;object-fit:cover" alt="">`
+        : `<div style="width:24px;height:24px;border-radius:6px;background:rgba(124,58,237,.2);color:var(--purple-l);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800">🌐</div>`;
+
+      return `
+        <div class="cov-card">
+          <div class="cov-head">
+            <div class="cov-name">${iconHtml}<span>${esc(s.server_name)}</span></div>
+            <span class="cov-pct-badge ${badgeCls}">${badgeTxt}</span>
+          </div>
+          <div class="cov-track">
+            <div class="cov-fill" style="width:${pct}%"></div>
+          </div>
+          <div class="cov-numbers">
+            <span>Official Discord: <strong>${offCount}</strong></span>
+            <span>Indexed in DB: <strong>${idxCount}</strong></span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }catch(err){
+    if(grid) grid.innerHTML = `<div style="font-size:.8rem;color:var(--red-l)">Failed to load coverage metrics: ${esc(err.message)}</div>`;
   }
 }
 

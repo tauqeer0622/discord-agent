@@ -805,3 +805,22 @@ def get_latest_campaign_record():
     if doc:
         doc.pop("_id", None)
     return doc
+
+
+def get_server_member_counts():
+    """Aggregate member count per server in MongoDB."""
+    collection = get_collection("discord_users")
+    pipeline = [
+        {"$unwind": "$servers"},
+        {"$group": {"_id": "$servers", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    results = {}
+    try:
+        for doc in collection.aggregate(pipeline):
+            s_name = doc.get("_id")
+            if s_name:
+                results[s_name] = doc.get("count", 0)
+    except Exception:
+        pass
+    return results

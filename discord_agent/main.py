@@ -15,6 +15,7 @@ from database import (
     get_message_by_id,
     get_messages,
     get_paginated_users,
+    get_server_member_counts,
     release_reply_slot,
     save_reply_for_message,
 )
@@ -381,6 +382,7 @@ class CommandCenterClient(discord.Client):
             web.post("/api/messages/{message_id}/reply",  self.handle_post_message_reply),
             web.get("/api/users",                         self.handle_get_users),
             web.get("/api/users/servers",                 self.handle_get_user_servers),
+            web.get("/api/users/server-coverage",         self.handle_get_server_coverage),
             web.post("/api/users/{user_id}/dm",           self.handle_post_user_dm),
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
@@ -1684,6 +1686,53 @@ class CommandCenterClient(discord.Client):
         except Exception as exc:
             logger.error("handle_get_user_servers error: %s", exc)
             return web.json_response([], headers=CORS_HEADERS)
+
+    async def handle_get_server_coverage(self, request):
+        """Return official Discord member count vs MongoDB indexed count per server."""
+        try:
+            db_counts = get_server_member_counts()
+            
+            # Fetch official guild member counts
+            guild_coverage = []
+            total_official = 0
+            total_indexed = 0
+
+            for guild in self.guilds:
+                official = getattr(guild, "member_count", None) or getattr(guild, "approximate_member_count", None) or 0
+                indexed = db_counts.get(guild.name, 0)
+                coverage_pct = round((indexed / official) * 100, 1) if official > 0 else 100.0
+                coverage_pct = min(100.0, coverage_pct)
+
+                total_official += official
+                total_indexed += indexed
+
+                icon_url = str(guild.icon.url) if guild.icon else None
+                guild_coverage.append({
+                    "guild_id": str(guild.id),
+                    "server_name": guild.name,
+                    "official_count": official,
+                    "indexed_count": indexed,
+                    "coverage_percent": coverage_pct,
+                    "icon_url": icon_url,
+                })
+
+            # Sort by official count desc
+            guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)
+
+            total_pct = round((total_indexed / total_official) * 100, 1) if total_official > 0 else 100.0
+            total_pct = min(100.0, total_pct)
+
+            return web.json_response({
+                "servers": guild_coverage,
+                "summary": {
+                    "total_official": total_official,
+                    "total_indexed": total_indexed,
+                    "coverage_percent": total_pct,
+                }
+            }, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_server_coverage error: %s", exc)
+            return web.json_response({"servers": [], "summary": {"total_official": 0, "total_indexed": 0, "coverage_percent": 0}, "error": str(exc)}, headers=CORS_HEADERS)
 
     async def handle_post_user_dm(self, request):
         """Send a direct DM to a user by user_id."""

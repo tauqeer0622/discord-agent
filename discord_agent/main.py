@@ -1449,16 +1449,18 @@ class CommandCenterClient(discord.Client):
                 except Exception as exc:
                     logger.debug("Gateway fetch_members for %s: %s", guild.name, exc)
 
-                # 2. Gateway query_members across character ranges for the entire server
+                # 2. Deep 2-Character Gateway query_members across character permutations
                 try:
-                    for char in list("abcdefghijklmnopqrstuvwxyz0123456789_"):
+                    chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+                    prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in chars]
+                    batch = []
+                    for prefix in prefixes:
                         try:
                             matched = await asyncio.wait_for(
-                                guild.query_members(query=char, limit=100, cache=True),
+                                guild.query_members(query=prefix, limit=100, cache=True),
                                 timeout=3.0
                             )
                             if matched:
-                                batch = []
                                 for member in matched:
                                     display_name = getattr(member, "global_name", None) or member.display_name or member.name
                                     roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
@@ -1476,13 +1478,16 @@ class CommandCenterClient(discord.Client):
                                         "avatar_url": avatar_url,
                                         "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
                                     })
-                                if batch:
+                                if len(batch) >= 200:
                                     bulk_upsert_users(batch)
+                                    batch = []
                         except Exception:
                             pass
-                        await asyncio.sleep(0.04)
+                        await asyncio.sleep(0.02)
+                    if batch:
+                        bulk_upsert_users(batch)
                 except Exception as q_err:
-                    logger.debug("Gateway query_members for %s: %s", guild.name, q_err)
+                    logger.debug("Gateway deep query_members for %s: %s", guild.name, q_err)
 
                 # Upsert all members currently in memory/gateway
                 cached_members = list(guild.members)

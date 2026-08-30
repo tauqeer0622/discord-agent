@@ -1399,7 +1399,7 @@ class CommandCenterClient(discord.Client):
             )
 
     async def _sync_single_guild(self, guild):
-        """High-speed member discovery for a single guild across sidebar, search queries, and channel history."""
+        """High-speed member discovery using Discord REST Search API + Multi-Channel Sidebar Scraper."""
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1412,17 +1412,12 @@ class CommandCenterClient(discord.Client):
             elif guild.text_channels:
                 default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
-            # 1. Subscribe to the server
+            # 1. Multi-Channel Sidebar Scraper
             try:
-                await guild.subscribe()
-            except Exception:
-                pass
-
-            # 2. Sidebar member scraper
-            try:
+                channels = [ch.id for ch in guild.text_channels[:5]]
                 scraped_members = await asyncio.wait_for(
-                    guild.fetch_members(cache=True, force_scraping=True, delay=0.02),
-                    timeout=90.0
+                    guild.fetch_members(channels=channels, cache=True, force_scraping=True, delay=0.01),
+                    timeout=45.0
                 )
                 if scraped_members:
                     batch = []
@@ -1451,58 +1446,76 @@ class CommandCenterClient(discord.Client):
             except Exception as exc:
                 logger.debug("Sidebar fetch_members for %s: %s", guild.name, exc)
 
-            # 3. Deep Gateway Query Members across character combinations
-            try:
-                chars = "abcdefghijklmnopqrstuvwxyz0123456789_.-!~[]()$@#+"
-                base_chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-                top_3 = ["the", "and", "you", "kin", "pro", "vip", "tra", "cry", "btc", "eth", "mar", "cas", "fra", "can", "hit", "tar", "dan", "sam", "chr", "rob", "mic", "dav", "joh", "ale", "tom", "joe", "ape", "bot", "mod", "adm"]
-                prefixes = list(chars) + [c1 + c2 for c1 in base_chars for c2 in base_chars] + top_3
-                
-                batch = []
+            # 2. Discord REST Search API (Retrieves offline & deep members)
+            headers = {
+                "Authorization": DISCORD_TOKEN,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+            chars = "abcdefghijklmnopqrstuvwxyz0123456789_.-!"
+            base_chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+            top_words = ["the", "and", "you", "kin", "pro", "vip", "tra", "cry", "btc", "eth", "mar", "cas", "fra", "can", "hit", "tar", "dan", "sam", "chr", "rob", "mic", "dav", "joh", "ale", "tom", "joe", "ape", "bot", "mod", "adm"]
+            prefixes = list(chars) + [c1 + c2 for c1 in base_chars for c2 in base_chars] + top_words
+
+            async with ClientSession(headers=headers) as session:
                 for prefix in prefixes:
+                    search_url = f"https://discord.com/api/v9/guilds/{guild.id}/members/search?query={prefix}&limit=100"
                     try:
-                        matched = await asyncio.wait_for(
-                            guild.query_members(query=prefix, limit=100, cache=True),
-                            timeout=2.5
-                        )
-                        if matched:
-                            for member in matched:
-                                display_name = getattr(member, "global_name", None) or member.display_name or member.name
-                                roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
-                                avatar_url = str(member.avatar.url) if member.avatar else None
-                                batch.append({
-                                    "user_id": str(member.id),
-                                    "username": member.name,
-                                    "display_name": display_name,
-                                    "server_nickname": member.nick or display_name,
-                                    "server_name": guild.name,
-                                    "channel_name": default_channel_str,
-                                    "assigned_roles": roles,
-                                    "is_bot": bool(member.bot),
-                                    "presence_status": str(getattr(member, "status", "offline")),
-                                    "avatar_url": avatar_url,
-                                    "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
-                                })
-                            if len(batch) >= 100:
-                                bulk_upsert_users(batch)
-                                batch = []
+                        async with session.get(search_url) as resp:
+                            if resp.status == 200:
+                                raw_list = await resp.json()
+                                if raw_list and isinstance(raw_list, list):
+                                    batch = []
+                                    for rm in raw_list:
+                                        u = rm.get("user", {})
+                                        uid = str(u.get("id") or "")
+                                        if not uid:
+                                            continue
+                                        username = u.get("username", "Unknown")
+                                        display_name = u.get("global_name") or username
+                                        server_nick = rm.get("nick") or display_name
+                                        is_bot = bool(u.get("bot", False))
+                                        avatar = u.get("avatar")
+                                        avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
+                                        member_roles = [
+                                            role_map.get(int(rid), str(rid))
+                                            for rid in rm.get("roles", [])
+                                            if int(rid) in role_map
+                                        ]
+                                        batch.append({
+                                            "user_id": uid,
+                                            "username": username,
+                                            "display_name": display_name,
+                                            "server_nickname": server_nick,
+                                            "server_name": guild.name,
+                                            "channel_name": default_channel_str,
+                                            "assigned_roles": member_roles,
+                                            "is_bot": is_bot,
+                                            "presence_status": "offline",
+                                            "avatar_url": avatar_url,
+                                            "joined_at": rm.get("joined_at"),
+                                        })
+                                    if batch:
+                                        bulk_upsert_users(batch)
+                            elif resp.status == 429:
+                                try:
+                                    err_data = await resp.json()
+                                    wait_s = float(err_data.get("retry_after", 1.0))
+                                except Exception:
+                                    wait_s = 1.0
+                                await asyncio.sleep(wait_s)
                     except Exception:
                         pass
-                    await asyncio.sleep(0.01)
-                if batch:
-                    bulk_upsert_users(batch)
-            except Exception as q_err:
-                logger.debug("Gateway deep query_members for %s: %s", guild.name, q_err)
+                    await asyncio.sleep(0.04)
 
-            # 4. Message History Scraping across accessible channels
+            # 3. Message History Scraping across accessible channels
             accessible_channels = [
                 ch for ch in guild.text_channels 
                 if ch.permissions_for(guild.me).read_message_history and not is_restricted_text_channel(ch, self.user)
             ]
-            for ch in accessible_channels[:30]:
+            for ch in accessible_channels[:25]:
                 try:
                     channel_batch = []
-                    async for msg in ch.history(limit=300):
+                    async for msg in ch.history(limit=250):
                         author = msg.author
                         if not author:
                             continue
@@ -1535,16 +1548,19 @@ class CommandCenterClient(discord.Client):
             logger.debug("Error syncing guild %s: %s", guild.name, err)
 
     async def _sync_guild_members_to_db(self):
-        """High-speed parallel member discovery across all joined guilds."""
+        """High-speed member discovery across all joined guilds."""
         if getattr(self, "_syncing_members", False):
             return
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            logger.info("Starting concurrent member sweep across %d guilds...", len(guild_list))
-            # Run all guilds in parallel for 10x speed
-            await asyncio.gather(*[self._sync_single_guild(g) for g in guild_list], return_exceptions=True)
-            logger.info("Concurrent member sweep complete.")
+            logger.info("Starting member discovery sweep across %d guilds...", len(guild_list))
+            # Sort smaller to larger so small guilds sync to 100% instantly
+            guild_list.sort(key=lambda g: getattr(g, "member_count", 0) or 0)
+            for guild in guild_list:
+                await self._sync_single_guild(guild)
+                await asyncio.sleep(0.5)
+            logger.info("Member discovery sweep complete.")
         except Exception as exc:
             logger.warning("Background user sync warning: %s", exc)
         finally:

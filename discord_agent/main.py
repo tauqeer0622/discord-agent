@@ -41,9 +41,13 @@ def generate_auth_token(password: str) -> str:
 
 @web.middleware
 async def auth_middleware(request, handler):
-    # Allow public UI shells, auth endpoints, and CORS preflight
-    public_paths = {"/", "/messages", "/api/auth/login", "/api/auth/check"}
+    # Allow public UI shells, health check (/api/status), auth endpoints, and CORS preflight
+    public_paths = {"/", "/messages", "/api/status", "/api/auth/login", "/api/auth/check"}
     if request.path in public_paths or request.method == "OPTIONS":
+        return await handler(request)
+
+    # Allow Render infrastructure health-check probes
+    if "Render" in request.headers.get("User-Agent", ""):
         return await handler(request)
 
     # Check Authorization header (Bearer <token>), cookie, or query param

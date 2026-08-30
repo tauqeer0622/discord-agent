@@ -1412,12 +1412,18 @@ class CommandCenterClient(discord.Client):
             elif guild.text_channels:
                 default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
-            # 1. Multi-Channel Sidebar Scraper
+            # 1. Gather ALL Accessible Channels (including VIP, Private, Trader, Alpha channels)
+            accessible_channels = [
+                ch for ch in guild.text_channels 
+                if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
+            ]
+
+            # 2. Multi-Channel Sidebar Scraper (across top 15 channel viewports including VIP)
             try:
-                channels = [ch.id for ch in guild.text_channels[:5]]
+                viewport_channels = [ch.id for ch in accessible_channels[:15]]
                 scraped_members = await asyncio.wait_for(
-                    guild.fetch_members(channels=channels, cache=True, force_scraping=True, delay=0.01),
-                    timeout=45.0
+                    guild.fetch_members(channels=viewport_channels, cache=True, force_scraping=True, delay=0.01),
+                    timeout=60.0
                 )
                 if scraped_members:
                     batch = []
@@ -1446,7 +1452,7 @@ class CommandCenterClient(discord.Client):
             except Exception as exc:
                 logger.debug("Sidebar fetch_members for %s: %s", guild.name, exc)
 
-            # 2. Discord REST Search API (Retrieves offline & deep members)
+            # 3. Discord REST Search API (Retrieves offline & deep members)
             headers = {
                 "Authorization": DISCORD_TOKEN,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1507,15 +1513,11 @@ class CommandCenterClient(discord.Client):
                         pass
                     await asyncio.sleep(0.015)
 
-            # 3. Message History Scraping across accessible channels
-            accessible_channels = [
-                ch for ch in guild.text_channels 
-                if ch.permissions_for(guild.me).read_message_history and not is_restricted_text_channel(ch, self.user)
-            ]
-            for ch in accessible_channels[:25]:
+            # 4. Message History Scraping across ALL accessible text channels (including VIP/Private/Trader channels)
+            for ch in accessible_channels[:60]:
                 try:
                     channel_batch = []
-                    async for msg in ch.history(limit=250):
+                    async for msg in ch.history(limit=500):
                         author = msg.author
                         if not author:
                             continue

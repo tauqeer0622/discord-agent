@@ -1505,7 +1505,7 @@ class CommandCenterClient(discord.Client):
                                 await asyncio.sleep(wait_s)
                     except Exception:
                         pass
-                    await asyncio.sleep(0.04)
+                    await asyncio.sleep(0.015)
 
             # 3. Message History Scraping across accessible channels
             accessible_channels = [
@@ -1548,18 +1548,20 @@ class CommandCenterClient(discord.Client):
             logger.debug("Error syncing guild %s: %s", guild.name, err)
 
     async def _sync_guild_members_to_db(self):
-        """High-speed member discovery across all joined guilds."""
+        """High-speed parallel member discovery across all joined guilds."""
         if getattr(self, "_syncing_members", False):
             return
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            logger.info("Starting member discovery sweep across %d guilds...", len(guild_list))
-            # Sort smaller to larger so small guilds sync to 100% instantly
-            guild_list.sort(key=lambda g: getattr(g, "member_count", 0) or 0)
-            for guild in guild_list:
-                await self._sync_single_guild(guild)
-                await asyncio.sleep(0.5)
+            logger.info("Starting member discovery sweep across %d guilds with concurrency=4...", len(guild_list))
+            sem = asyncio.Semaphore(4)
+
+            async def _worker(g):
+                async with sem:
+                    await self._sync_single_guild(g)
+
+            await asyncio.gather(*[_worker(g) for g in guild_list], return_exceptions=True)
             logger.info("Member discovery sweep complete.")
         except Exception as exc:
             logger.warning("Background user sync warning: %s", exc)

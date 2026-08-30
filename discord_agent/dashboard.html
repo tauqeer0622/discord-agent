@@ -2418,6 +2418,7 @@ async function loadServerCoverage(){
   }
 }
 
+let deepSyncPollTimer = null;
 async function triggerDeepSyncAll(){
   const btn = $('btnDeepSyncAll');
   if(btn){
@@ -2427,8 +2428,18 @@ async function triggerDeepSyncAll(){
   try{
     const res = await fetch('/api/users/sync-all', { method: 'POST' });
     if(res.ok){
-      setTimeout(loadServerCoverage, 3000);
-      setTimeout(loadUsers, 3000);
+      // Poll every 3 seconds for 2 minutes to show live moving numbers
+      if(deepSyncPollTimer) clearInterval(deepSyncPollTimer);
+      let pollCount = 0;
+      deepSyncPollTimer = setInterval(() => {
+        pollCount++;
+        loadServerCoverage();
+        loadUsers();
+        if(pollCount >= 40){ // 120 seconds
+          clearInterval(deepSyncPollTimer);
+          deepSyncPollTimer = null;
+        }
+      }, 3000);
     }
   }catch(e){
     console.error('Failed to trigger deep sync:', e);
@@ -2438,7 +2449,7 @@ async function triggerDeepSyncAll(){
         btn.disabled = false;
         btn.textContent = '⚡ Deep Sync 100% Members';
       }
-    }, 4000);
+    }, 5000);
   }
 }
 

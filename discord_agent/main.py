@@ -383,6 +383,7 @@ class CommandCenterClient(discord.Client):
             web.get("/api/users",                         self.handle_get_users),
             web.get("/api/users/servers",                 self.handle_get_user_servers),
             web.get("/api/users/server-coverage",         self.handle_get_server_coverage),
+            web.post("/api/users/sync-all",               self.handle_post_sync_all),
             web.post("/api/users/{user_id}/dm",           self.handle_post_user_dm),
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
@@ -1423,11 +1424,13 @@ class CommandCenterClient(discord.Client):
 
                 try:
                     # fetch_members with force_scraping=True downloads all members from the whole server
+                    logger.info("Starting full sidebar member scrape for guild: %s", guild.name)
                     scraped_members = await asyncio.wait_for(
-                        guild.fetch_members(cache=True, force_scraping=True, delay=0.05),
-                        timeout=25.0
+                        guild.fetch_members(cache=True, force_scraping=True, delay=0.02),
+                        timeout=180.0
                     )
                     if scraped_members:
+                        logger.info("Scraped %d members from sidebar for %s", len(scraped_members), guild.name)
                         batch = []
                         for member in scraped_members:
                             display_name = getattr(member, "global_name", None) or member.display_name or member.name
@@ -1446,6 +1449,9 @@ class CommandCenterClient(discord.Client):
                                 "avatar_url": avatar_url,
                                 "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
                             })
+                            if len(batch) >= 500:
+                                bulk_upsert_users(batch)
+                                batch = []
                         if batch:
                             bulk_upsert_users(batch)
                 except Exception as exc:
@@ -1453,8 +1459,8 @@ class CommandCenterClient(discord.Client):
 
                 # 2. Deep 2-Character Gateway query_members across character permutations
                 try:
-                    chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-                    prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in chars]
+                    chars = "abcdefghijklmnopqrstuvwxyz0123456789_.-!~[]()$@#+"
+                    prefixes = list(chars) + [c1 + c2 for c1 in "abcdefghijklmnopqrstuvwxyz0123456789_" for c2 in "abcdefghijklmnopqrstuvwxyz0123456789_"]
                     batch = []
                     for prefix in prefixes:
                         try:
@@ -1733,6 +1739,14 @@ class CommandCenterClient(discord.Client):
         except Exception as exc:
             logger.error("handle_get_server_coverage error: %s", exc)
             return web.json_response({"servers": [], "summary": {"total_official": 0, "total_indexed": 0, "coverage_percent": 0}, "error": str(exc)}, headers=CORS_HEADERS)
+
+    async def handle_post_sync_all(self, request):
+        """Trigger an immediate deep sync across all servers."""
+        try:
+            asyncio.create_task(self._sync_guild_members_to_db())
+            return web.json_response({"success": True, "message": "Deep 100% member synchronization started in the background."}, headers=CORS_HEADERS)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=500, headers=CORS_HEADERS)
 
     async def handle_post_user_dm(self, request):
         """Send a direct DM to a user by user_id."""

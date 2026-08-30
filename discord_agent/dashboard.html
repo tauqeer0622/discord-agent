@@ -904,6 +904,9 @@
           </div>
           <div style="display:flex;gap:10px;align-items:center">
             <span class="pill" id="covTotalPill" style="background:rgba(34,197,94,.15);color:var(--green-l);border-color:rgba(34,197,94,.3)">Coverage: Calculating…</span>
+            <button type="button" class="btn-primary" id="btnDeepSyncAll" onclick="triggerDeepSyncAll()" style="padding:6px 14px;font-size:.75rem">
+              ⚡ Deep Sync 100% Members
+            </button>
             <button type="button" class="btn-secondary" onclick="loadServerCoverage()" style="padding:6px 12px;font-size:.75rem" title="Re-check official Discord server member counts">
               🔄 Verify Live Counts
             </button>
@@ -2412,6 +2415,30 @@ async function loadServerCoverage(){
     }).join('');
   }catch(err){
     if(grid) grid.innerHTML = `<div style="font-size:.8rem;color:var(--red-l)">Failed to load coverage metrics: ${esc(err.message)}</div>`;
+  }
+}
+
+async function triggerDeepSyncAll(){
+  const btn = $('btnDeepSyncAll');
+  if(btn){
+    btn.disabled = true;
+    btn.textContent = '⚡ Sweeping 100% Members…';
+  }
+  try{
+    const res = await fetch('/api/users/sync-all', { method: 'POST' });
+    if(res.ok){
+      setTimeout(loadServerCoverage, 3000);
+      setTimeout(loadUsers, 3000);
+    }
+  }catch(e){
+    console.error('Failed to trigger deep sync:', e);
+  }finally{
+    setTimeout(() => {
+      if(btn){
+        btn.disabled = false;
+        btn.textContent = '⚡ Deep Sync 100% Members';
+      }
+    }, 4000);
   }
 }
 

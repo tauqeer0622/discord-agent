@@ -1418,40 +1418,7 @@ class CommandCenterClient(discord.Client):
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
             ]
 
-            # 1. Gateway Member Sidebar Scraper
-            try:
-                scraped_members = await asyncio.wait_for(
-                    guild.fetch_members(cache=True, force_scraping=True, delay=0.01),
-                    timeout=90.0
-                )
-                if scraped_members:
-                    batch = []
-                    for member in scraped_members:
-                        display_name = getattr(member, "global_name", None) or member.display_name or member.name
-                        roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
-                        avatar_url = str(member.avatar.url) if member.avatar else None
-                        batch.append({
-                            "user_id": str(member.id),
-                            "username": member.name,
-                            "display_name": display_name,
-                            "server_nickname": member.nick or display_name,
-                            "server_name": guild.name,
-                            "channel_name": default_channel_str,
-                            "assigned_roles": roles,
-                            "is_bot": bool(member.bot),
-                            "presence_status": str(getattr(member, "status", "offline")),
-                            "avatar_url": avatar_url,
-                            "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
-                        })
-                        if len(batch) >= 200:
-                            bulk_upsert_users(batch)
-                            batch = []
-                    if batch:
-                        bulk_upsert_users(batch)
-            except Exception as exc:
-                logger.debug("Sidebar fetch_members for %s: %s", guild.name, exc)
-
-            # 2. Gateway Deep Member Search Query across character permutations
+            # 1. Gateway Deep Member Search Query across character permutations
             chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
             top_3 = ["the", "and", "you", "kin", "pro", "vip", "tra", "cry", "btc", "eth", "mar", "cas", "fra", "can", "hit", "tar", "dan", "sam", "chr", "rob", "mic", "dav", "joh", "ale", "tom", "joe", "ape", "bot", "mod", "adm"]
             prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in chars] + top_3
@@ -1461,7 +1428,7 @@ class CommandCenterClient(discord.Client):
                 try:
                     matched = await asyncio.wait_for(
                         guild.query_members(query=prefix, limit=100, cache=True),
-                        timeout=4.0
+                        timeout=3.0
                     )
                     if matched:
                         for member in matched:
@@ -1486,9 +1453,33 @@ class CommandCenterClient(discord.Client):
                             batch = []
                 except Exception:
                     pass
-                await asyncio.sleep(0.04)
+                await asyncio.sleep(0.05)
             if batch:
                 bulk_upsert_users(batch)
+
+            # 2. Upsert all members cached in gateway memory
+            cached_members = list(guild.members)
+            if cached_members:
+                batch = []
+                for member in cached_members:
+                    display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                    roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                    avatar_url = str(member.avatar.url) if member.avatar else None
+                    batch.append({
+                        "user_id": str(member.id),
+                        "username": member.name,
+                        "display_name": display_name,
+                        "server_nickname": member.nick or display_name,
+                        "server_name": guild.name,
+                        "channel_name": default_channel_str,
+                        "assigned_roles": roles,
+                        "is_bot": bool(member.bot),
+                        "presence_status": str(getattr(member, "status", "offline")),
+                        "avatar_url": avatar_url,
+                        "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                    })
+                if batch:
+                    bulk_upsert_users(batch)
 
             # 3. Message History Scraping across all readable channels (including VIP/Private)
             accessible_channels = [
@@ -1531,20 +1522,16 @@ class CommandCenterClient(discord.Client):
             logger.debug("Error syncing guild %s: %s", guild.name, err)
 
     async def _sync_guild_members_to_db(self):
-        """High-speed parallel member discovery across all joined guilds."""
+        """High-speed member discovery across all joined guilds sequentially for 100% gateway connection stability."""
         if getattr(self, "_syncing_members", False):
             return
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            logger.info("Starting member discovery sweep across %d guilds with concurrency=2...", len(guild_list))
-            sem = asyncio.Semaphore(2)
-
-            async def _worker(g):
-                async with sem:
-                    await self._sync_single_guild(g)
-
-            await asyncio.gather(*[_worker(g) for g in guild_list], return_exceptions=True)
+            logger.info("Starting member discovery sweep across %d guilds...", len(guild_list))
+            for guild in guild_list:
+                await self._sync_single_guild(guild)
+                await asyncio.sleep(0.5)
             logger.info("Member discovery sweep complete.")
         except Exception as exc:
             logger.warning("Background user sync warning: %s", exc)

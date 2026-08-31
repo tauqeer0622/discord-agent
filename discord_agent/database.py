@@ -824,3 +824,40 @@ def get_server_member_counts():
     except Exception:
         pass
     return results
+
+
+def save_official_guild_stats(guild_list):
+    """Persist official Discord server metadata and official member counts in MongoDB."""
+    if not guild_list:
+        return
+    collection = get_collection("guild_official_stats")
+    for g in guild_list:
+        gid = str(g.get("guild_id") or "")
+        if not gid:
+            continue
+        collection.update_one(
+            {"guild_id": gid},
+            {"$set": {
+                "guild_id": gid,
+                "server_name": g.get("server_name"),
+                "official_count": g.get("official_count", 0),
+                "icon_url": g.get("icon_url"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True
+        )
+
+
+def get_official_guild_stats():
+    """Retrieve persisted official Discord server stats from MongoDB."""
+    collection = get_collection("guild_official_stats")
+    records = {}
+    try:
+        for doc in collection.find({}):
+            doc.pop("_id", None)
+            s_name = doc.get("server_name")
+            if s_name:
+                records[s_name] = doc
+    except Exception:
+        pass
+    return records

@@ -14,9 +14,11 @@ from database import (
     get_campaign_target_count,
     get_message_by_id,
     get_messages,
+    get_official_guild_stats,
     get_paginated_users,
     get_server_member_counts,
     release_reply_slot,
+    save_official_guild_stats,
     save_reply_for_message,
 )
 import hashlib
@@ -1596,13 +1598,15 @@ class CommandCenterClient(discord.Client):
         """Return official Discord member count vs MongoDB indexed count per server."""
         try:
             db_counts = get_server_member_counts()
+            persisted_guilds = get_official_guild_stats()
             
-            # Fetch official guild member counts
             guild_coverage = []
             total_official = 0
             total_indexed = 0
 
+            # If client.guilds has items, update and persist them
             if self.guilds:
+                guild_stats_to_save = []
                 for guild in self.guilds:
                     official = getattr(guild, "member_count", None) or getattr(guild, "approximate_member_count", None) or 0
                     indexed = db_counts.get(guild.name, 0)
@@ -1621,42 +1625,43 @@ class CommandCenterClient(discord.Client):
                         "coverage_percent": coverage_pct,
                         "icon_url": icon_url,
                     })
+                    guild_stats_to_save.append({
+                        "guild_id": str(guild.id),
+                        "server_name": guild.name,
+                        "official_count": official,
+                        "icon_url": icon_url,
+                    })
+                save_official_guild_stats(guild_stats_to_save)
+            elif persisted_guilds:
+                # Use persisted official Discord stats if gateway is currently reconnecting
+                for s_name, p_stat in persisted_guilds.items():
+                    official = p_stat.get("official_count", 0)
+                    indexed = db_counts.get(s_name, 0)
+                    coverage_pct = round((indexed / official) * 100, 1) if official > 0 else 100.0
+                    coverage_pct = min(100.0, coverage_pct)
 
-                guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)
-                total_pct = round((total_indexed / total_official) * 100, 1) if total_official > 0 else 100.0
-                total_pct = min(100.0, total_pct)
+                    total_official += official
+                    total_indexed += indexed
 
-                self._cached_coverage = {
-                    "servers": guild_coverage,
-                    "summary": {
-                        "total_official": total_official,
-                        "total_indexed": total_indexed,
-                        "coverage_percent": total_pct,
-                    }
-                }
-                return web.json_response(self._cached_coverage, headers=CORS_HEADERS)
+                    guild_coverage.append({
+                        "guild_id": p_stat.get("guild_id", ""),
+                        "server_name": s_name,
+                        "official_count": official,
+                        "indexed_count": indexed,
+                        "coverage_percent": coverage_pct,
+                        "icon_url": p_stat.get("icon_url"),
+                    })
 
-            # Fallback to cached coverage if gateway is reconnecting
-            if hasattr(self, "_cached_coverage") and self._cached_coverage:
-                return web.json_response(self._cached_coverage, headers=CORS_HEADERS)
+            guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)
+            total_pct = round((total_indexed / total_official) * 100, 1) if total_official > 0 else 100.0
+            total_pct = min(100.0, total_pct)
 
-            # Fallback to DB servers
-            for s_name, count in db_counts.items():
-                total_indexed += count
-                guild_coverage.append({
-                    "guild_id": "",
-                    "server_name": s_name,
-                    "official_count": count,
-                    "indexed_count": count,
-                    "coverage_percent": 100.0,
-                    "icon_url": None,
-                })
             return web.json_response({
                 "servers": guild_coverage,
                 "summary": {
-                    "total_official": total_indexed,
+                    "total_official": total_official,
                     "total_indexed": total_indexed,
-                    "coverage_percent": 100.0,
+                    "coverage_percent": total_pct,
                 }
             }, headers=CORS_HEADERS)
         except Exception as exc:

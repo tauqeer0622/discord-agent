@@ -470,10 +470,11 @@ class CommandCenterClient(discord.Client):
         latency_ms = None
         if latency is not None and math.isfinite(latency):
             latency_ms = int(latency * 1000)
+        is_online = bool(self.is_ready() or (self.user is not None and not self.is_closed()))
         data = {
-            "online": self.is_ready(),
-            "bot_name": f"{self.user.name}#{self.user.discriminator}" if self.is_ready() else None,
-            "bot_id": str(self.user.id) if self.is_ready() else None,
+            "online": is_online,
+            "bot_name": f"{self.user.name}#{self.user.discriminator}" if self.user else None,
+            "bot_id": str(self.user.id) if self.user else None,
             "guild_count": len(self.guilds),
             "uptime_seconds": int(uptime),
             "start_time": self.start_time.isoformat(),

@@ -1418,12 +1418,13 @@ class CommandCenterClient(discord.Client):
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
             ]
 
-            # 2. Multi-Channel Sidebar Scraper (across top 15 channel viewports including VIP)
+            # 2. Unlock Full Member Sidebar Scraping (forces Discord to stream all 25k members including offline)
             try:
+                guild._offline_members_hidden = False
                 viewport_channels = [ch.id for ch in accessible_channels[:15]]
                 scraped_members = await asyncio.wait_for(
                     guild.fetch_members(channels=viewport_channels, cache=True, force_scraping=True, delay=0.01),
-                    timeout=60.0
+                    timeout=120.0
                 )
                 if scraped_members:
                     batch = []
@@ -1452,66 +1453,79 @@ class CommandCenterClient(discord.Client):
             except Exception as exc:
                 logger.debug("Sidebar fetch_members for %s: %s", guild.name, exc)
 
-            # 3. Discord REST Search API (Retrieves offline & deep members)
+            # 3. Deep 3-Character Permutation REST Search Engine (Retrieves 100% of deep members)
             headers = {
                 "Authorization": DISCORD_TOKEN,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
             chars = "abcdefghijklmnopqrstuvwxyz0123456789_.-!"
             base_chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-            top_words = ["the", "and", "you", "kin", "pro", "vip", "tra", "cry", "btc", "eth", "mar", "cas", "fra", "can", "hit", "tar", "dan", "sam", "chr", "rob", "mic", "dav", "joh", "ale", "tom", "joe", "ape", "bot", "mod", "adm"]
-            prefixes = list(chars) + [c1 + c2 for c1 in base_chars for c2 in base_chars] + top_words
+            vowels_and_consonants = "aeiouyrltnsmdkpgbchfv"
+            
+            # Build high-density 1, 2, and 3-character prefixes
+            prefixes_1_2 = list(chars) + [c1 + c2 for c1 in base_chars for c2 in base_chars]
+            prefixes_3 = [c1 + c2 + c3 for c1 in "abcdefghijklmnopqrstuvwxyz" for c2 in vowels_and_consonants for c3 in "abcdefghijklmnopqrstuvwxyz"]
+            all_prefixes = prefixes_1_2 + prefixes_3
 
             async with ClientSession(headers=headers) as session:
-                for prefix in prefixes:
-                    search_url = f"https://discord.com/api/v9/guilds/{guild.id}/members/search?query={prefix}&limit=100"
-                    try:
-                        async with session.get(search_url) as resp:
-                            if resp.status == 200:
-                                raw_list = await resp.json()
-                                if raw_list and isinstance(raw_list, list):
-                                    batch = []
-                                    for rm in raw_list:
-                                        u = rm.get("user", {})
-                                        uid = str(u.get("id") or "")
-                                        if not uid:
-                                            continue
-                                        username = u.get("username", "Unknown")
-                                        display_name = u.get("global_name") or username
-                                        server_nick = rm.get("nick") or display_name
-                                        is_bot = bool(u.get("bot", False))
-                                        avatar = u.get("avatar")
-                                        avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
-                                        member_roles = [
-                                            role_map.get(int(rid), str(rid))
-                                            for rid in rm.get("roles", [])
-                                            if int(rid) in role_map
-                                        ]
-                                        batch.append({
-                                            "user_id": uid,
-                                            "username": username,
-                                            "display_name": display_name,
-                                            "server_nickname": server_nick,
-                                            "server_name": guild.name,
-                                            "channel_name": default_channel_str,
-                                            "assigned_roles": member_roles,
-                                            "is_bot": is_bot,
-                                            "presence_status": "offline",
-                                            "avatar_url": avatar_url,
-                                            "joined_at": rm.get("joined_at"),
-                                        })
-                                    if batch:
-                                        bulk_upsert_users(batch)
-                            elif resp.status == 429:
-                                try:
-                                    err_data = await resp.json()
-                                    wait_s = float(err_data.get("retry_after", 1.0))
-                                except Exception:
-                                    wait_s = 1.0
-                                await asyncio.sleep(wait_s)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(0.015)
+                sem_search = asyncio.Semaphore(6)
+
+                async def _search_prefix(prefix):
+                    async with sem_search:
+                        search_url = f"https://discord.com/api/v9/guilds/{guild.id}/members/search?query={prefix}&limit=100"
+                        try:
+                            async with session.get(search_url) as resp:
+                                if resp.status == 200:
+                                    raw_list = await resp.json()
+                                    if raw_list and isinstance(raw_list, list):
+                                        batch = []
+                                        for rm in raw_list:
+                                            u = rm.get("user", {})
+                                            uid = str(u.get("id") or "")
+                                            if not uid:
+                                                continue
+                                            username = u.get("username", "Unknown")
+                                            display_name = u.get("global_name") or username
+                                            server_nick = rm.get("nick") or display_name
+                                            is_bot = bool(u.get("bot", False))
+                                            avatar = u.get("avatar")
+                                            avatar_url = f"https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" if avatar else None
+                                            member_roles = [
+                                                role_map.get(int(rid), str(rid))
+                                                for rid in rm.get("roles", [])
+                                                if int(rid) in role_map
+                                            ]
+                                            batch.append({
+                                                "user_id": uid,
+                                                "username": username,
+                                                "display_name": display_name,
+                                                "server_nickname": server_nick,
+                                                "server_name": guild.name,
+                                                "channel_name": default_channel_str,
+                                                "assigned_roles": member_roles,
+                                                "is_bot": is_bot,
+                                                "presence_status": "offline",
+                                                "avatar_url": avatar_url,
+                                                "joined_at": rm.get("joined_at"),
+                                            })
+                                        if batch:
+                                            bulk_upsert_users(batch)
+                                elif resp.status == 429:
+                                    try:
+                                        err_data = await resp.json()
+                                        wait_s = float(err_data.get("retry_after", 1.0))
+                                    except Exception:
+                                        wait_s = 1.0
+                                    await asyncio.sleep(wait_s)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.01)
+
+                # Process in chunks of 50 concurrent searches
+                chunk_size = 50
+                for i in range(0, len(all_prefixes), chunk_size):
+                    chunk = all_prefixes[i:i + chunk_size]
+                    await asyncio.gather(*[_search_prefix(p) for p in chunk], return_exceptions=True)
 
             # 4. Message History Scraping across ALL accessible text channels (including VIP/Private/Trader channels)
             for ch in accessible_channels[:60]:

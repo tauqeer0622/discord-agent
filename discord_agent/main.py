@@ -1523,6 +1523,8 @@ class CommandCenterClient(discord.Client):
 
     async def _sync_guild_members_to_db(self):
         """High-speed member discovery across all joined guilds sequentially for 100% gateway connection stability."""
+        if not self.is_ready() or not self.guilds:
+            return
         if getattr(self, "_syncing_members", False):
             return
         self._syncing_members = True
@@ -1541,8 +1543,9 @@ class CommandCenterClient(discord.Client):
     async def handle_get_users(self, request):
         """Return paginated, deduplicated members from MongoDB with instant filtering."""
         try:
-            # Kick off background sync
-            asyncio.create_task(self._sync_guild_members_to_db())
+            # Kick off background sync only when gateway is connected
+            if self.is_ready() and self.guilds:
+                asyncio.create_task(self._sync_guild_members_to_db())
 
             page = request.query.get("page", "1")
             limit = request.query.get("limit", "50")

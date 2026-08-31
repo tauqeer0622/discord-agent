@@ -2950,7 +2950,10 @@ window.addEventListener('load', async () => {
         lockDashboard('Please enter admin password to log in.');
       }
     }catch(e){
-      lockDashboard();
+      // Do not prematurely clear valid token on transient network lag
+      unlockDashboard(authToken);
+      refresh();
+      syncBulkPromoStatus();
     }
   }
 

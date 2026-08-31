@@ -1598,37 +1598,61 @@ class CommandCenterClient(discord.Client):
             total_official = 0
             total_indexed = 0
 
-            for guild in self.guilds:
-                official = getattr(guild, "member_count", None) or getattr(guild, "approximate_member_count", None) or 0
-                indexed = db_counts.get(guild.name, 0)
-                coverage_pct = round((indexed / official) * 100, 1) if official > 0 else 100.0
-                coverage_pct = min(100.0, coverage_pct)
+            if self.guilds:
+                for guild in self.guilds:
+                    official = getattr(guild, "member_count", None) or getattr(guild, "approximate_member_count", None) or 0
+                    indexed = db_counts.get(guild.name, 0)
+                    coverage_pct = round((indexed / official) * 100, 1) if official > 0 else 100.0
+                    coverage_pct = min(100.0, coverage_pct)
 
-                total_official += official
-                total_indexed += indexed
+                    total_official += official
+                    total_indexed += indexed
 
-                icon_url = str(guild.icon.url) if guild.icon else None
+                    icon_url = str(guild.icon.url) if guild.icon else None
+                    guild_coverage.append({
+                        "guild_id": str(guild.id),
+                        "server_name": guild.name,
+                        "official_count": official,
+                        "indexed_count": indexed,
+                        "coverage_percent": coverage_pct,
+                        "icon_url": icon_url,
+                    })
+
+                guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)
+                total_pct = round((total_indexed / total_official) * 100, 1) if total_official > 0 else 100.0
+                total_pct = min(100.0, total_pct)
+
+                self._cached_coverage = {
+                    "servers": guild_coverage,
+                    "summary": {
+                        "total_official": total_official,
+                        "total_indexed": total_indexed,
+                        "coverage_percent": total_pct,
+                    }
+                }
+                return web.json_response(self._cached_coverage, headers=CORS_HEADERS)
+
+            # Fallback to cached coverage if gateway is reconnecting
+            if hasattr(self, "_cached_coverage") and self._cached_coverage:
+                return web.json_response(self._cached_coverage, headers=CORS_HEADERS)
+
+            # Fallback to DB servers
+            for s_name, count in db_counts.items():
+                total_indexed += count
                 guild_coverage.append({
-                    "guild_id": str(guild.id),
-                    "server_name": guild.name,
-                    "official_count": official,
-                    "indexed_count": indexed,
-                    "coverage_percent": coverage_pct,
-                    "icon_url": icon_url,
+                    "guild_id": "",
+                    "server_name": s_name,
+                    "official_count": count,
+                    "indexed_count": count,
+                    "coverage_percent": 100.0,
+                    "icon_url": None,
                 })
-
-            # Sort by official count desc
-            guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)
-
-            total_pct = round((total_indexed / total_official) * 100, 1) if total_official > 0 else 100.0
-            total_pct = min(100.0, total_pct)
-
             return web.json_response({
                 "servers": guild_coverage,
                 "summary": {
-                    "total_official": total_official,
+                    "total_official": total_indexed,
                     "total_indexed": total_indexed,
-                    "coverage_percent": total_pct,
+                    "coverage_percent": 100.0,
                 }
             }, headers=CORS_HEADERS)
         except Exception as exc:
@@ -1982,11 +2006,12 @@ async def run_service():
                 "skipped": True,
             }
 
-        await client.start(DISCORD_TOKEN)
-    except discord.errors.LoginFailure as e:
-        client.discord_last_error = "Discord login failed. Check DISCORD_TOKEN."
-        logger.error("%s %s", client.discord_last_error, e)
-        await _hold_web_server_for_diagnostics()
+        try:
+            await client.start(DISCORD_TOKEN)
+        except discord.errors.LoginFailure as e:
+            client.discord_last_error = "Discord login failed. Check DISCORD_TOKEN."
+            logger.error("%s %s", client.discord_last_error, e)
+            await _hold_web_server_for_diagnostics()
     except Exception as e:
         client.discord_last_error = str(e)[:200]
         logger.error(f"Critical error: {e}")

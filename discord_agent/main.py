@@ -1421,44 +1421,65 @@ class CommandCenterClient(discord.Client):
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
             ]
 
-            # 1. Gateway Deep Member Search Query across character permutations
+            # 1. Gateway Deep Member Search Query across 3-character permutations
             chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-            top_3 = ["the", "and", "you", "kin", "pro", "vip", "tra", "cry", "btc", "eth", "mar", "cas", "fra", "can", "hit", "tar", "dan", "sam", "chr", "rob", "mic", "dav", "joh", "ale", "tom", "joe", "ape", "bot", "mod", "adm"]
-            prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in chars] + top_3
+            letters = "abcdefghijklmnopqrstuvwxyz"
+            vowels = "aeiouy0123456789_"
+            
+            # 1-char + 2-char + high-coverage 3-char triples
+            prefixes_1_2 = list(chars) + [c1 + c2 for c1 in chars for c2 in chars]
+            prefixes_3_vowels = [c1 + v + c2 for c1 in letters for v in vowels for c2 in letters]
+            crypto_prefixes = [
+                "btc", "eth", "sol", "xrp", "bnb", "ada", "dog", "dot", "trx", "ltc", "ava", "uni", "lin",
+                "mon", "cas", "fra", "tra", "vip", "pro", "max", "kin", "mar", "ape", "bot", "mod", "adm",
+                "dan", "mic", "dav", "chr", "rob", "sam", "tom", "joe", "ben", "guy", "roy", "leo", "ray",
+                "ian", "tim", "val", "vic", "zac", "wil", "neo", "dex", "nft", "hod", "wha", "cha", "sig",
+                "alr", "hit", "tar", "bou", "lum", "opt", "zon", "spa", "str", "sta", "sto", "sky", "sun",
+                "mon", "dar", "lig", "red", "gre", "blu", "gol", "sil", "dia", "fir", "ice", "air", "wat",
+                "ear", "sto", "kin", "que", "pri", "lor", "god", "dem", "ang", "wol", "fox", "bea", "bul",
+                "lio", "tig", "dra", "sha", "eag", "haw", "cor", "dev", "cod", "hac", "sec", "net", "web"
+            ]
+            all_prefixes = list(dict.fromkeys(prefixes_1_2 + prefixes_3_vowels + crypto_prefixes))
 
-            batch = []
-            for prefix in prefixes:
-                try:
-                    matched = await asyncio.wait_for(
-                        guild.query_members(query=prefix, limit=100, cache=True),
-                        timeout=3.0
-                    )
-                    if matched:
-                        for member in matched:
-                            display_name = getattr(member, "global_name", None) or member.display_name or member.name
-                            roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
-                            avatar_url = str(member.avatar.url) if member.avatar else None
-                            batch.append({
-                                "user_id": str(member.id),
-                                "username": member.name,
-                                "display_name": display_name,
-                                "server_nickname": member.nick or display_name,
-                                "server_name": guild.name,
-                                "channel_name": default_channel_str,
-                                "assigned_roles": roles,
-                                "is_bot": bool(member.bot),
-                                "presence_status": str(getattr(member, "status", "offline")),
-                                "avatar_url": avatar_url,
-                                "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
-                            })
-                        if len(batch) >= 150:
-                            bulk_upsert_users(batch)
-                            batch = []
-                except Exception:
-                    pass
-                await asyncio.sleep(0.05)
-            if batch:
-                bulk_upsert_users(batch)
+            sem_search = asyncio.Semaphore(4)
+
+            async def _query_single_prefix(pfx):
+                async with sem_search:
+                    try:
+                        matched = await asyncio.wait_for(
+                            guild.query_members(query=pfx, limit=100, cache=True),
+                            timeout=4.0
+                        )
+                        if matched:
+                            b = []
+                            for member in matched:
+                                display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                                roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                                avatar_url = str(member.avatar.url) if member.avatar else None
+                                b.append({
+                                    "user_id": str(member.id),
+                                    "username": member.name,
+                                    "display_name": display_name,
+                                    "server_nickname": member.nick or display_name,
+                                    "server_name": guild.name,
+                                    "channel_name": default_channel_str,
+                                    "assigned_roles": roles,
+                                    "is_bot": bool(member.bot),
+                                    "presence_status": str(getattr(member, "status", "offline")),
+                                    "avatar_url": avatar_url,
+                                    "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                                })
+                            if b:
+                                bulk_upsert_users(b)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.02)
+
+            # Run searches in parallel chunks of 40
+            chunk_size = 40
+            for i in range(0, len(all_prefixes), chunk_size):
+                chunk = all_prefixes[i:i + chunk_size]
+                await asyncio.gather(*[_query_single_prefix(p) for p in chunk], return_exceptions=True)
 
             # 2. Upsert all members cached in gateway memory
             cached_members = list(guild.members)
@@ -1489,10 +1510,10 @@ class CommandCenterClient(discord.Client):
                 ch for ch in guild.text_channels 
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
             ]
-            for ch in accessible_channels[:40]:
+            for ch in accessible_channels[:80]:
                 try:
                     channel_batch = []
-                    async for msg in ch.history(limit=300):
+                    async for msg in ch.history(limit=500):
                         author = msg.author
                         if not author:
                             continue

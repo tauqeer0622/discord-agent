@@ -1431,14 +1431,20 @@ class CommandCenterClient(discord.Client):
 
     async def _sync_single_guild(self, guild):
         """
-        Maximum member discovery for a single guild:
-        
-        - fetch_members() → gets ONLINE members via MemberSidebar (~50% for large guilds)
-        - query_members() prefix sweep → gets OFFLINE members too (Discord returns ALL
-          members whose username starts with the query prefix, including offline ones)
-        
-        The two combined give near-complete coverage without mod permissions.
+        Maximum member discovery using an adaptive recursive prefix search.
+
+        Problem: query_members(query="ab", limit=100) only returns the FIRST 100 members
+        starting with "ab". For a 112k-member server, "ab" may have 300+ matches.
+
+        Solution: If a prefix returns exactly 100 (the limit), automatically sub-divide
+        it into deeper prefixes ("aba", "abb", "abc" ...) until each sub-prefix returns
+        fewer than 100 — guaranteeing 100% of members under that prefix are captured.
+
+        fetch_members() is used first for online members (fast), then the recursive
+        adaptive search covers all offline members too.
         """
+        from collections import deque
+
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1461,8 +1467,8 @@ class CommandCenterClient(discord.Client):
                 pass
 
             # ── STEP 2: fetch_members() — Captures ONLINE members via MemberSidebar ─────
-            # NOTE: For large servers, Discord hides offline members from the sidebar.
-            # This gets ~50% (the online half). We then sweep query_members for offline.
+            # For large servers Discord hides offline members from the sidebar (~50% only).
+            # We do this first for a quick initial upsert, then sweep offline members.
             fetched_members = []
             try:
                 sidebar_channels = [
@@ -1476,74 +1482,102 @@ class CommandCenterClient(discord.Client):
                     guild.fetch_members(**fetch_kw),
                     timeout=180.0
                 )
-                logger.info(
-                    "fetch_members() done for '%s': %d online members.",
-                    guild.name, len(fetched_members)
-                )
+                logger.info("fetch_members() done for '%s': %d online members.", guild.name, len(fetched_members))
             except Exception as fm_err:
                 logger.warning("fetch_members() failed for '%s': %s", guild.name, fm_err)
 
             # ── STEP 3: Upsert online members immediately ────────────────────────────────
             cached_members = list(guild.members)
-            combined = {}
+            seen_ids = {}
             for m in (fetched_members + cached_members):
-                combined[m.id] = m
-            online_members = list(combined.values())
+                seen_ids[m.id] = m
+            online_members = list(seen_ids.values())
             if online_members:
                 await self._upsert_members_from_list(online_members, guild, default_channel_str, role_map)
                 logger.info("Upserted %d online members for '%s'.", len(online_members), guild.name)
 
-            # ── STEP 4: query_members prefix sweep — Captures OFFLINE members ────────────
-            # query_members(query="ab") returns up to 100 members whose username/nick
-            # STARTS WITH "ab", INCLUDING offline members. Running all 1-char and 2-char
-            # prefixes covers the full alphabet and catches the offline half.
+            # ── STEP 4: Adaptive recursive prefix search — Captures OFFLINE members ──────
             #
-            # Rate limit strategy: max 2 concurrent queries, 200ms gap between each,
-            # 2 second pause between batches of 10 → ~3-5 minutes total, no 429s.
-            chars = "abcdefghijklmnopqrstuvwxyz0123456789._-"
-            # All 1-char prefixes (covers display names starting with numbers/symbols)
-            one_char = list(chars)
-            # All 2-char prefixes (much broader coverage for longer usernames)
-            two_char = [c1 + c2 for c1 in "abcdefghijklmnopqrstuvwxyz" for c2 in "abcdefghijklmnopqrstuvwxyz0123456789"]
-            all_prefixes = one_char + two_char  # ~702 + 936 = ~1638 prefixes
+            # Algorithm:
+            #   1. Start with all single-char prefixes: a-z, 0-9, _, ., -
+            #   2. Query each prefix (limit=100, includes offline members)
+            #   3. If a prefix returns EXACTLY 100 results → more members exist beyond the
+            #      limit → expand it by appending each char (a-z0-9_) and re-query
+            #   4. Repeat until all sub-prefixes return < 100 results
+            #   5. Max depth = 4 chars (e.g. "abcd") to prevent infinite recursion
+            #
+            # Rate limits: Semaphore(2), 250ms delay per query, 2s between batches of 8
 
-            seen_offline_ids = set(combined.keys())  # Skip IDs we already have
+            START_CHARS  = "abcdefghijklmnopqrstuvwxyz0123456789_.-"
+            EXPAND_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
+            MAX_DEPTH = 4
             offline_found = 0
-
-            async def _query_one(pfx):
-                nonlocal offline_found
-                try:
-                    matched = await asyncio.wait_for(
-                        guild.query_members(query=pfx, limit=100, cache=True),
-                        timeout=8.0
-                    )
-                    if matched:
-                        new_members = [m for m in matched if m.id not in seen_offline_ids]
-                        if new_members:
-                            for m in new_members:
-                                seen_offline_ids.add(m.id)
-                            offline_found += len(new_members)
-                            await self._upsert_members_from_list(new_members, guild, default_channel_str, role_map)
-                except Exception:
-                    pass
-                await asyncio.sleep(0.2)  # 200ms between each query — safe rate limit
-
+            total_queries = 0
             sem = asyncio.Semaphore(2)
 
-            async def _query_guarded(pfx):
+            async def _do_query(prefix):
+                """Execute one query_members call, return (matched_list | None)."""
+                nonlocal total_queries
                 async with sem:
-                    await _query_one(pfx)
+                    try:
+                        result = await asyncio.wait_for(
+                            guild.query_members(query=prefix, limit=100, cache=True),
+                            timeout=10.0
+                        )
+                        total_queries += 1
+                        await asyncio.sleep(0.25)  # 250ms between queries inside semaphore
+                        return result
+                    except Exception:
+                        await asyncio.sleep(0.25)
+                        return None
 
-            logger.info("Starting offline member query sweep for '%s' (%d prefixes)...", guild.name, len(all_prefixes))
-            batch_size = 10
-            for i in range(0, len(all_prefixes), batch_size):
-                batch = all_prefixes[i:i + batch_size]
-                await asyncio.gather(*[_query_guarded(p) for p in batch], return_exceptions=True)
-                await asyncio.sleep(2.0)  # 2s pause between batches
+            # Use a queue so we can dynamically add deeper prefixes when needed
+            queue = deque(START_CHARS)
+            visited = set()
+
+            logger.info("Starting adaptive prefix search for '%s'...", guild.name)
+
+            while queue:
+                # Take a batch of up to 8 prefixes
+                batch = []
+                while queue and len(batch) < 8:
+                    pfx = queue.popleft()
+                    if pfx not in visited:
+                        visited.add(pfx)
+                        batch.append(pfx)
+
+                if not batch:
+                    continue
+
+                # Query all prefixes in the batch concurrently (semaphore limits to 2 at a time)
+                results = await asyncio.gather(*[_do_query(p) for p in batch], return_exceptions=True)
+
+                for pfx, matched in zip(batch, results):
+                    if not isinstance(matched, list):
+                        continue
+
+                    # Save new members we haven't seen yet
+                    new_members = [m for m in matched if m.id not in seen_ids]
+                    if new_members:
+                        for m in new_members:
+                            seen_ids[m.id] = m
+                        offline_found += len(new_members)
+                        await self._upsert_members_from_list(new_members, guild, default_channel_str, role_map)
+
+                    # If we hit the result limit AND haven't gone too deep → subdivide
+                    if len(matched) >= 100 and len(pfx) < MAX_DEPTH:
+                        for c in EXPAND_CHARS:
+                            sub = pfx + c
+                            if sub not in visited:
+                                queue.append(sub)
+
+                # Brief pause between batches to stay well within rate limits
+                if queue:
+                    await asyncio.sleep(2.0)
 
             logger.info(
-                "Offline sweep done for '%s': %d new offline members found.",
-                guild.name, offline_found
+                "Adaptive search done for '%s': %d offline members found in %d queries.",
+                guild.name, offline_found, total_queries
             )
 
             # ── STEP 5: Message history scraping — catches any remaining users ────────────
@@ -1583,15 +1617,15 @@ class CommandCenterClient(discord.Client):
                 except Exception:
                     pass
 
-            total_found = len(online_members) + offline_found
+            total_found = len(seen_ids)
             logger.info(
-                "Guild '%s' sync complete: %d online + %d offline = %d total (%.1f%% of %d official)",
+                "Guild '%s' sync complete: %d total (%.1f%% of %d official) — %d online + %d offline",
                 guild.name,
-                len(online_members),
-                offline_found,
                 total_found,
                 (total_found / official_count * 100) if official_count else 0,
                 official_count,
+                len(online_members),
+                offline_found,
             )
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)

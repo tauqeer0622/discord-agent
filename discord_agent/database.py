@@ -861,3 +861,71 @@ def get_official_guild_stats():
     except Exception:
         pass
     return records
+
+
+def save_scanned_prefixes(guild_id: str, prefixes: set):
+    """Persist the set of already-scanned prefixes for a guild so the search resumes across restarts."""
+    try:
+        col = get_collection("prefix_scan_progress")
+        col.update_one(
+            {"guild_id": guild_id},
+            {"$set": {
+                "guild_id": guild_id,
+                "scanned": list(prefixes),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+def get_scanned_prefixes(guild_id: str) -> set:
+    """Retrieve the set of already-scanned prefixes for a guild."""
+    try:
+        col = get_collection("prefix_scan_progress")
+        doc = col.find_one({"guild_id": guild_id})
+        if doc:
+            return set(doc.get("scanned", []))
+    except Exception:
+        pass
+    return set()
+
+
+def clear_scanned_prefixes(guild_id: str):
+    """Clear the scanned prefix progress for a guild (triggers fresh full scan)."""
+    try:
+        get_collection("prefix_scan_progress").delete_one({"guild_id": guild_id})
+    except Exception:
+        pass
+
+
+def save_sync_status(guild_id: str, guild_name: str, status: dict):
+    """Persist real-time sync progress for a guild."""
+    try:
+        col = get_collection("sync_status")
+        col.update_one(
+            {"guild_id": guild_id},
+            {"$set": {
+                "guild_id": guild_id,
+                "guild_name": guild_name,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                **status,
+            }},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+def get_all_sync_status() -> list:
+    """Retrieve sync status for all guilds."""
+    try:
+        col = get_collection("sync_status")
+        return [
+            {k: v for k, v in doc.items() if k != "_id"}
+            for doc in col.find({})
+        ]
+    except Exception:
+        return []
+

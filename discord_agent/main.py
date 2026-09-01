@@ -16,10 +16,15 @@ from database import (
     get_messages,
     get_official_guild_stats,
     get_paginated_users,
+    get_scanned_prefixes,
     get_server_member_counts,
     release_reply_slot,
     save_official_guild_stats,
     save_reply_for_message,
+    save_scanned_prefixes,
+    save_sync_status,
+    get_all_sync_status,
+    clear_scanned_prefixes,
 )
 import hashlib
 import hmac
@@ -1431,20 +1436,24 @@ class CommandCenterClient(discord.Client):
 
     async def _sync_single_guild(self, guild):
         """
-        Maximum member discovery using an adaptive recursive prefix search.
+        Maximum member discovery with PERSISTENT PROGRESS.
 
-        Problem: query_members(query="ab", limit=100) only returns the FIRST 100 members
-        starting with "ab". For a 112k-member server, "ab" may have 300+ matches.
+        The adaptive prefix search saves its progress to MongoDB after every batch,
+        so if Render restarts mid-search, the next run picks up where it left off
+        instead of restarting from scratch.
 
-        Solution: If a prefix returns exactly 100 (the limit), automatically sub-divide
-        it into deeper prefixes ("aba", "abb", "abc" ...) until each sub-prefix returns
-        fewer than 100 — guaranteeing 100% of members under that prefix are captured.
-
-        fetch_members() is used first for online members (fast), then the recursive
-        adaptive search covers all offline members too.
+        Flow:
+          1. fetch_members()  → online members fast (~50%)
+          2. Adaptive prefix tree search → offline members
+             - Starts with a-z, 0-9, _, ., -
+             - Skips prefixes already scanned (loaded from MongoDB)
+             - If a prefix returns 100 (the limit) → subdivide into deeper prefixes
+             - Progress saved to MongoDB every 25 queries
+          3. Message history scraping
         """
         from collections import deque
 
+        guild_id = str(guild.id)
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1466,9 +1475,7 @@ class CommandCenterClient(discord.Client):
             except Exception:
                 pass
 
-            # ── STEP 2: fetch_members() — Captures ONLINE members via MemberSidebar ─────
-            # For large servers Discord hides offline members from the sidebar (~50% only).
-            # We do this first for a quick initial upsert, then sweep offline members.
+            # ── STEP 2: fetch_members() — Captures ONLINE members (~50% for large servers)
             fetched_members = []
             try:
                 sidebar_channels = [
@@ -1490,94 +1497,147 @@ class CommandCenterClient(discord.Client):
             cached_members = list(guild.members)
             seen_ids = {}
             for m in (fetched_members + cached_members):
-                seen_ids[m.id] = m
-            online_members = list(seen_ids.values())
+                seen_ids[m.id] = True
+            online_members = fetched_members or cached_members
             if online_members:
-                await self._upsert_members_from_list(online_members, guild, default_channel_str, role_map)
-                logger.info("Upserted %d online members for '%s'.", len(online_members), guild.name)
+                await self._upsert_members_from_list(
+                    list({m.id: m for m in online_members}.values()),
+                    guild, default_channel_str, role_map
+                )
+                logger.info("Upserted %d online members for '%s'.", len(seen_ids), guild.name)
 
-            # ── STEP 4: Adaptive recursive prefix search — Captures OFFLINE members ──────
+            # ── STEP 4: Adaptive prefix tree with PERSISTENT PROGRESS ────────────────────
             #
-            # Algorithm:
-            #   1. Start with all single-char prefixes: a-z, 0-9, _, ., -
-            #   2. Query each prefix (limit=100, includes offline members)
-            #   3. If a prefix returns EXACTLY 100 results → more members exist beyond the
-            #      limit → expand it by appending each char (a-z0-9_) and re-query
-            #   4. Repeat until all sub-prefixes return < 100 results
-            #   5. Max depth = 4 chars (e.g. "abcd") to prevent infinite recursion
+            # Key insight: query_members(query="ab", limit=100) returns ALL members with
+            # username/nick starting "ab", including offline — but capped at 100.
+            # When we hit the cap, we subdivide: "aba", "abb", "abc"...
             #
-            # Rate limits: Semaphore(2), 250ms delay per query, 2s between batches of 8
+            # Persistent: we store "visited" prefixes in MongoDB so Render restarts
+            # don't reset the entire search.
 
-            START_CHARS  = "abcdefghijklmnopqrstuvwxyz0123456789_.-"
-            EXPAND_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_"
-            MAX_DEPTH = 4
+            START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-")
+            EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
+            MAX_DEPTH    = 4
+            SAVE_EVERY   = 25   # Save progress to MongoDB every N queries
+            BATCH_SIZE   = 6    # Prefixes per gather batch
+            CONCURRENCY  = 3    # Max concurrent gateway queries
+            DELAY_MS     = 0.2  # Seconds between queries (inside semaphore)
+            BATCH_PAUSE  = 1.5  # Seconds between batches
+
+            # Load previously scanned prefixes from MongoDB
+            visited = get_scanned_prefixes(guild_id)
+            resume_count = len(visited)
+            if resume_count:
+                logger.info(
+                    "Resuming prefix search for '%s' — skipping %d already-scanned prefixes.",
+                    guild.name, resume_count
+                )
+
+            # Build initial queue excluding already-visited
+            queue = deque(p for p in START_CHARS if p not in visited)
             offline_found = 0
             total_queries = 0
-            sem = asyncio.Semaphore(2)
+            sem = asyncio.Semaphore(CONCURRENCY)
 
             async def _do_query(prefix):
-                """Execute one query_members call, return (matched_list | None)."""
                 nonlocal total_queries
                 async with sem:
                     try:
                         result = await asyncio.wait_for(
                             guild.query_members(query=prefix, limit=100, cache=True),
-                            timeout=10.0
+                            timeout=12.0
                         )
-                        total_queries += 1
-                        await asyncio.sleep(0.25)  # 250ms between queries inside semaphore
+                        await asyncio.sleep(DELAY_MS)
                         return result
                     except Exception:
-                        await asyncio.sleep(0.25)
+                        await asyncio.sleep(DELAY_MS)
                         return None
+                    finally:
+                        total_queries += 1
 
-            # Use a queue so we can dynamically add deeper prefixes when needed
-            queue = deque(START_CHARS)
-            visited = set()
-
-            logger.info("Starting adaptive prefix search for '%s'...", guild.name)
+            logger.info("Adaptive prefix search for '%s' starting...", guild.name)
 
             while queue:
-                # Take a batch of up to 8 prefixes
+                # Build a batch
                 batch = []
-                while queue and len(batch) < 8:
+                while queue and len(batch) < BATCH_SIZE:
                     pfx = queue.popleft()
                     if pfx not in visited:
-                        visited.add(pfx)
                         batch.append(pfx)
 
                 if not batch:
                     continue
 
-                # Query all prefixes in the batch concurrently (semaphore limits to 2 at a time)
+                # Mark as visited before querying (prevents duplicates on retry)
+                for pfx in batch:
+                    visited.add(pfx)
+
                 results = await asyncio.gather(*[_do_query(p) for p in batch], return_exceptions=True)
 
+                new_batch = []
                 for pfx, matched in zip(batch, results):
                     if not isinstance(matched, list):
                         continue
 
-                    # Save new members we haven't seen yet
-                    new_members = [m for m in matched if m.id not in seen_ids]
-                    if new_members:
-                        for m in new_members:
-                            seen_ids[m.id] = m
-                        offline_found += len(new_members)
-                        await self._upsert_members_from_list(new_members, guild, default_channel_str, role_map)
+                    # Collect new members
+                    for m in matched:
+                        if m.id not in seen_ids:
+                            seen_ids[m.id] = True
+                            new_batch.append(m)
+                            offline_found += 1
 
-                    # If we hit the result limit AND haven't gone too deep → subdivide
+                    # If hit limit → subdivide (only if under max depth)
                     if len(matched) >= 100 and len(pfx) < MAX_DEPTH:
                         for c in EXPAND_CHARS:
                             sub = pfx + c
                             if sub not in visited:
                                 queue.append(sub)
 
-                # Brief pause between batches to stay well within rate limits
-                if queue:
-                    await asyncio.sleep(2.0)
+                if new_batch:
+                    await self._upsert_members_from_list(new_batch, guild, default_channel_str, role_map)
 
+                # Persist progress periodically
+                if total_queries % SAVE_EVERY == 0:
+                    save_scanned_prefixes(guild_id, visited)
+                    total_found_so_far = len(seen_ids)
+                    save_sync_status(guild_id, guild.name, {
+                        "phase": "prefix_search",
+                        "total_queries": total_queries,
+                        "prefixes_visited": len(visited),
+                        "prefixes_remaining": len(queue),
+                        "offline_found": offline_found,
+                        "total_indexed": total_found_so_far,
+                        "official_count": official_count,
+                        "coverage_pct": round(total_found_so_far / official_count * 100, 1) if official_count else 0,
+                    })
+                    logger.info(
+                        "  '%s' progress: %d queries, %d new, %d queued, %.1f%% coverage",
+                        guild.name, total_queries, offline_found, len(queue),
+                        (len(seen_ids) / official_count * 100) if official_count else 0
+                    )
+
+                if queue:
+                    await asyncio.sleep(BATCH_PAUSE)
+
+            # Save final state
+            save_scanned_prefixes(guild_id, visited)
+            total_found = len(seen_ids)
+            save_sync_status(guild_id, guild.name, {
+                "phase": "complete",
+                "total_queries": total_queries,
+                "prefixes_visited": len(visited),
+                "offline_found": offline_found,
+                "total_indexed": total_found,
+                "official_count": official_count,
+                "coverage_pct": round(total_found / official_count * 100, 1) if official_count else 0,
+            })
             logger.info(
-                "Adaptive search done for '%s': %d offline members found in %d queries.",
-                guild.name, offline_found, total_queries
+                "Adaptive search done for '%s': %d total (%.1f%%), %d queries, %d offline found.",
+                guild.name,
+                total_found,
+                (total_found / official_count * 100) if official_count else 0,
+                total_queries,
+                offline_found,
             )
 
             # ── STEP 5: Message history scraping — catches any remaining users ────────────
@@ -1617,21 +1677,16 @@ class CommandCenterClient(discord.Client):
                 except Exception:
                     pass
 
-            total_found = len(seen_ids)
-            logger.info(
-                "Guild '%s' sync complete: %d total (%.1f%% of %d official) — %d online + %d offline",
-                guild.name,
-                total_found,
-                (total_found / official_count * 100) if official_count else 0,
-                official_count,
-                len(online_members),
-                offline_found,
-            )
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)
+            # Save whatever progress we have even on error
+            try:
+                save_scanned_prefixes(guild_id, visited)
+            except Exception:
+                pass
 
     async def _sync_guild_members_to_db(self):
-        """High-speed member discovery across all joined guilds sequentially for 100% gateway connection stability."""
+        """Member discovery across all joined guilds."""
         if not self.is_ready() or not self.guilds:
             return
         if getattr(self, "_syncing_members", False):

@@ -1434,7 +1434,7 @@ class CommandCenterClient(discord.Client):
         if batch:
             bulk_upsert_users(batch)
 
-    async def _sync_single_guild(self, guild):
+    async def _sync_single_guild(self, guild, global_gw_sem=None):
         """
         Maximum member discovery with PERSISTENT PROGRESS.
 
@@ -1550,19 +1550,22 @@ class CommandCenterClient(discord.Client):
 
             async def _do_query(prefix):
                 nonlocal total_queries
-                async with sem:
-                    try:
-                        result = await asyncio.wait_for(
-                            guild.query_members(query=prefix, limit=100, cache=True),
-                            timeout=8.0
-                        )
-                        await asyncio.sleep(DELAY_MS)
-                        return result
-                    except Exception:
-                        await asyncio.sleep(DELAY_MS)
-                        return None
-                    finally:
-                        total_queries += 1
+                # Acquire global semaphore first (shared across all guilds)
+                # then local semaphore (per-guild limit)
+                async with (global_gw_sem or asyncio.Semaphore(CONCURRENCY)):
+                    async with sem:
+                        try:
+                            result = await asyncio.wait_for(
+                                guild.query_members(query=prefix, limit=100, cache=True),
+                                timeout=8.0
+                            )
+                            await asyncio.sleep(DELAY_MS)
+                            return result
+                        except Exception:
+                            await asyncio.sleep(DELAY_MS)
+                            return None
+                        finally:
+                            total_queries += 1
 
             logger.info(
                 "Adaptive prefix search for '%s' starting: %d pending in queue, %d already visited.",
@@ -1723,9 +1726,15 @@ class CommandCenterClient(discord.Client):
                 [g.name for g in guild_list[:5]]
             )
 
+            # Global gateway semaphore: Discord gateway allows 120 events/60s total.
+            # With 17 guilds each sending Opcode 8 queries concurrently, we'd saturate
+            # the budget instantly. This shared semaphore limits total in-flight queries
+            # to 10 across ALL guilds, keeping gateway headroom for other events.
+            global_gw_sem = asyncio.Semaphore(10)
+
             # Run ALL guilds concurrently (gateway can handle it)
             await asyncio.gather(
-                *[self._sync_single_guild(g) for g in guild_list],
+                *[self._sync_single_guild(g, global_gw_sem) for g in guild_list],
                 return_exceptions=True
             )
             logger.info("All guild syncs complete.")
@@ -1800,7 +1809,9 @@ class CommandCenterClient(discord.Client):
             if self.guilds:
                 guild_stats_to_save = []
                 for guild in self.guilds:
-                    official = getattr(guild, "member_count", None) or getattr(guild, "approximate_member_count", None) or 0
+                    # Use only gateway-cached member_count — never approximate_member_count
+                    # (approximate_member_count triggers a REST /guilds/{id}/preview call per guild)
+                    official = getattr(guild, "member_count", None) or 0
                     indexed = db_counts.get(guild.name, 0)
                     coverage_pct = round((indexed / official) * 100, 1) if official > 0 else 100.0
                     coverage_pct = min(100.0, coverage_pct)

@@ -1430,7 +1430,15 @@ class CommandCenterClient(discord.Client):
             bulk_upsert_users(batch)
 
     async def _sync_single_guild(self, guild):
-        """Complete member discovery for a single guild using guild.chunk() for 100% coverage."""
+        """
+        Maximum member discovery for a single guild:
+        
+        - fetch_members() → gets ONLINE members via MemberSidebar (~50% for large guilds)
+        - query_members() prefix sweep → gets OFFLINE members too (Discord returns ALL
+          members whose username starts with the query prefix, including offline ones)
+        
+        The two combined give near-complete coverage without mod permissions.
+        """
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1444,23 +1452,19 @@ class CommandCenterClient(discord.Client):
                 default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
             official_count = getattr(guild, "member_count", 0) or 0
-            logger.info("Syncing guild '%s' (official: %d members)...", guild.name, official_count)
+            logger.info("Syncing guild '%s' (%d official members)...", guild.name, official_count)
 
-            # ── STEP 1: Ensure guild is subscribed (required for chunk) ─────────────────
+            # ── STEP 1: Subscribe for real-time events ───────────────────────────────────
             try:
                 await guild.subscribe()
             except Exception:
-                pass  # Already subscribed or not needed
+                pass
 
-            # ── STEP 2: guild.fetch_members() — Full member list via MemberSidebar/Chunk ─
-            # fetch_members() works without subscription and automatically picks:
-            #   - Real chunk (Opcode 8, all members incl. offline) if user has mod perms
-            #   - MemberSidebar scrape (scrolls through visible members) otherwise
-            # We pass up to 5 most-active channels to maximize sidebar coverage.
-            fetch_success = False
+            # ── STEP 2: fetch_members() — Captures ONLINE members via MemberSidebar ─────
+            # NOTE: For large servers, Discord hides offline members from the sidebar.
+            # This gets ~50% (the online half). We then sweep query_members for offline.
             fetched_members = []
             try:
-                # Pick up to 5 text channels visible to everyone for sidebar scraping
                 sidebar_channels = [
                     ch for ch in guild.text_channels
                     if not is_restricted_text_channel(ch, self.user)
@@ -1472,53 +1476,77 @@ class CommandCenterClient(discord.Client):
                     guild.fetch_members(**fetch_kw),
                     timeout=180.0
                 )
-                fetch_success = True
                 logger.info(
-                    "fetch_members() complete for '%s': %d members returned.",
+                    "fetch_members() done for '%s': %d online members.",
                     guild.name, len(fetched_members)
                 )
-            except asyncio.TimeoutError:
-                logger.warning("fetch_members() timed out for '%s'. Will use gateway cache.", guild.name)
             except Exception as fm_err:
                 logger.warning("fetch_members() failed for '%s': %s", guild.name, fm_err)
 
-            # ── STEP 3: Upsert fetched + cached members ─────────────────────────────────
-            # Prefer the explicit fetched list; always also upsert whatever is in cache
+            # ── STEP 3: Upsert online members immediately ────────────────────────────────
             cached_members = list(guild.members)
             combined = {}
             for m in (fetched_members + cached_members):
                 combined[m.id] = m
-            members_to_upsert = list(combined.values())
-            if members_to_upsert:
-                logger.info("Upserting %d members from '%s'...", len(members_to_upsert), guild.name)
-                await self._upsert_members_from_list(members_to_upsert, guild, default_channel_str, role_map)
+            online_members = list(combined.values())
+            if online_members:
+                await self._upsert_members_from_list(online_members, guild, default_channel_str, role_map)
+                logger.info("Upserted %d online members for '%s'.", len(online_members), guild.name)
 
-            # ── STEP 4: If fetch_members failed, use query_members prefix sweep as fallback ─
-            if not fetch_success:
-                chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-                # 1-char + 2-char prefixes only (avoid rate limits)
-                prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in "aeiouy0123456789"]
-                sem_search = asyncio.Semaphore(2)
+            # ── STEP 4: query_members prefix sweep — Captures OFFLINE members ────────────
+            # query_members(query="ab") returns up to 100 members whose username/nick
+            # STARTS WITH "ab", INCLUDING offline members. Running all 1-char and 2-char
+            # prefixes covers the full alphabet and catches the offline half.
+            #
+            # Rate limit strategy: max 2 concurrent queries, 200ms gap between each,
+            # 2 second pause between batches of 10 → ~3-5 minutes total, no 429s.
+            chars = "abcdefghijklmnopqrstuvwxyz0123456789._-"
+            # All 1-char prefixes (covers display names starting with numbers/symbols)
+            one_char = list(chars)
+            # All 2-char prefixes (much broader coverage for longer usernames)
+            two_char = [c1 + c2 for c1 in "abcdefghijklmnopqrstuvwxyz" for c2 in "abcdefghijklmnopqrstuvwxyz0123456789"]
+            all_prefixes = one_char + two_char  # ~702 + 936 = ~1638 prefixes
 
-                async def _query_prefix(pfx):
-                    async with sem_search:
-                        try:
-                            matched = await asyncio.wait_for(
-                                guild.query_members(query=pfx, limit=100, cache=True),
-                                timeout=5.0
-                            )
-                            if matched:
-                                await self._upsert_members_from_list(matched, guild, default_channel_str, role_map)
-                        except Exception:
-                            pass
-                        await asyncio.sleep(0.15)  # Respect rate limits
+            seen_offline_ids = set(combined.keys())  # Skip IDs we already have
+            offline_found = 0
 
-                for i in range(0, len(prefixes), 20):
-                    chunk = prefixes[i:i + 20]
-                    await asyncio.gather(*[_query_prefix(p) for p in chunk], return_exceptions=True)
-                    await asyncio.sleep(1.0)  # Pause between batches to avoid 429s
+            async def _query_one(pfx):
+                nonlocal offline_found
+                try:
+                    matched = await asyncio.wait_for(
+                        guild.query_members(query=pfx, limit=100, cache=True),
+                        timeout=8.0
+                    )
+                    if matched:
+                        new_members = [m for m in matched if m.id not in seen_offline_ids]
+                        if new_members:
+                            for m in new_members:
+                                seen_offline_ids.add(m.id)
+                            offline_found += len(new_members)
+                            await self._upsert_members_from_list(new_members, guild, default_channel_str, role_map)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.2)  # 200ms between each query — safe rate limit
 
-            # ── STEP 4: Message history scraping — catches non-member users too ──────────
+            sem = asyncio.Semaphore(2)
+
+            async def _query_guarded(pfx):
+                async with sem:
+                    await _query_one(pfx)
+
+            logger.info("Starting offline member query sweep for '%s' (%d prefixes)...", guild.name, len(all_prefixes))
+            batch_size = 10
+            for i in range(0, len(all_prefixes), batch_size):
+                batch = all_prefixes[i:i + batch_size]
+                await asyncio.gather(*[_query_guarded(p) for p in batch], return_exceptions=True)
+                await asyncio.sleep(2.0)  # 2s pause between batches
+
+            logger.info(
+                "Offline sweep done for '%s': %d new offline members found.",
+                guild.name, offline_found
+            )
+
+            # ── STEP 5: Message history scraping — catches any remaining users ────────────
             accessible_channels = [
                 ch for ch in guild.text_channels
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
@@ -1555,13 +1583,15 @@ class CommandCenterClient(discord.Client):
                 except Exception:
                     pass
 
-            final_count = len(members_to_upsert) if members_to_upsert else len(list(guild.members))
+            total_found = len(online_members) + offline_found
             logger.info(
-                "Guild '%s' sync done. Upserted: %d / Official: %d (%.1f%%)",
+                "Guild '%s' sync complete: %d online + %d offline = %d total (%.1f%% of %d official)",
                 guild.name,
-                final_count,
+                len(online_members),
+                offline_found,
+                total_found,
+                (total_found / official_count * 100) if official_count else 0,
                 official_count,
-                (final_count / official_count * 100) if official_count else 0,
             )
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)

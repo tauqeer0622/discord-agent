@@ -863,33 +863,38 @@ def get_official_guild_stats():
     return records
 
 
-def save_scanned_prefixes(guild_id: str, prefixes: set):
-    """Persist the set of already-scanned prefixes for a guild so the search resumes across restarts."""
+def save_scanned_prefixes(guild_id: str, visited: set, pending_queue: list = None):
+    """Persist visited prefixes AND pending queue for a guild so the search resumes exactly where it stopped."""
     try:
         col = get_collection("prefix_scan_progress")
+        doc = {
+            "guild_id": guild_id,
+            "scanned": list(visited),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if pending_queue is not None:
+            doc["pending"] = list(pending_queue)
         col.update_one(
             {"guild_id": guild_id},
-            {"$set": {
-                "guild_id": guild_id,
-                "scanned": list(prefixes),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
+            {"$set": doc},
             upsert=True,
         )
     except Exception:
         pass
 
 
-def get_scanned_prefixes(guild_id: str) -> set:
-    """Retrieve the set of already-scanned prefixes for a guild."""
+def get_scanned_prefixes(guild_id: str) -> tuple:
+    """Retrieve visited prefixes AND pending queue for a guild.
+    Returns (visited_set, pending_list).
+    """
     try:
         col = get_collection("prefix_scan_progress")
         doc = col.find_one({"guild_id": guild_id})
         if doc:
-            return set(doc.get("scanned", []))
+            return set(doc.get("scanned", [])), list(doc.get("pending", []))
     except Exception:
         pass
-    return set()
+    return set(), []
 
 
 def clear_scanned_prefixes(guild_id: str):

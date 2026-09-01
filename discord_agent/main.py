@@ -1524,17 +1524,26 @@ class CommandCenterClient(discord.Client):
             DELAY_MS     = 0.2  # Seconds between queries (inside semaphore)
             BATCH_PAUSE  = 0.8  # Seconds between batches (reduced - 17 guilds concurrent)
 
-            # Load previously scanned prefixes from MongoDB
-            visited = get_scanned_prefixes(guild_id)
+            # Load previously scanned prefixes AND saved queue from MongoDB
+            visited, saved_queue = get_scanned_prefixes(guild_id)
             resume_count = len(visited)
             if resume_count:
-                logger.info(
-                    "Resuming prefix search for '%s' — skipping %d already-scanned prefixes.",
-                    guild.name, resume_count
-                )
-
-            # Build initial queue excluding already-visited
-            queue = deque(p for p in START_CHARS if p not in visited)
+                if saved_queue:
+                    queue = deque(saved_queue)
+                    logger.info(
+                        "Resuming prefix search for '%s' — %d visited, %d pending in queue.",
+                        guild.name, resume_count, len(queue)
+                    )
+                else:
+                    # Old-format saved data (queue not persisted): fall back to unvisited START_CHARS
+                    queue = deque(p for p in START_CHARS if p not in visited)
+                    logger.info(
+                        "Resuming prefix search for '%s' — %d visited, queue rebuilt from START_CHARS (%d remaining).",
+                        guild.name, resume_count, len(queue)
+                    )
+            else:
+                queue = deque(START_CHARS)
+                logger.info("Starting fresh prefix search for '%s'.", guild.name)
             offline_found = 0
             total_queries = 0
             sem = asyncio.Semaphore(CONCURRENCY)
@@ -1555,7 +1564,10 @@ class CommandCenterClient(discord.Client):
                     finally:
                         total_queries += 1
 
-            logger.info("Adaptive prefix search for '%s' starting...", guild.name)
+            logger.info(
+                "Adaptive prefix search for '%s' starting: %d pending in queue, %d already visited.",
+                guild.name, len(queue), len(visited)
+            )
 
             while queue:
                 # Build a batch
@@ -1596,9 +1608,9 @@ class CommandCenterClient(discord.Client):
                 if new_batch:
                     await self._upsert_members_from_list(new_batch, guild, default_channel_str, role_map)
 
-                # Persist progress periodically
+                # Persist progress + queue periodically
                 if total_queries % SAVE_EVERY == 0:
-                    save_scanned_prefixes(guild_id, visited)
+                    save_scanned_prefixes(guild_id, visited, list(queue))
                     total_found_so_far = len(seen_ids)
                     save_sync_status(guild_id, guild.name, {
                         "phase": "prefix_search",
@@ -1619,8 +1631,8 @@ class CommandCenterClient(discord.Client):
                 if queue:
                     await asyncio.sleep(BATCH_PAUSE)
 
-            # Save final state
-            save_scanned_prefixes(guild_id, visited)
+            # Save final state (queue is empty since search is done)
+            save_scanned_prefixes(guild_id, visited, [])
             total_found = len(seen_ids)
             save_sync_status(guild_id, guild.name, {
                 "phase": "complete",
@@ -1679,9 +1691,10 @@ class CommandCenterClient(discord.Client):
 
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)
-            # Save whatever progress we have even on error
+            # Save whatever progress + queue we have even on error
             try:
-                save_scanned_prefixes(guild_id, visited)
+                _q = queue if "queue" in dir() else []
+                save_scanned_prefixes(guild_id, visited, list(_q))
             except Exception:
                 pass
 

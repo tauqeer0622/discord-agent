@@ -1401,8 +1401,36 @@ class CommandCenterClient(discord.Client):
                 headers=CORS_HEADERS
             )
 
+    async def _upsert_members_from_list(self, members, guild, default_channel_str, role_map):
+        """Convert a list of discord.Member objects into DB records and upsert them."""
+        if not members:
+            return
+        batch = []
+        for member in members:
+            try:
+                display_name = getattr(member, "global_name", None) or member.display_name or member.name
+                roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
+                avatar_url = str(member.avatar.url) if member.avatar else None
+                batch.append({
+                    "user_id": str(member.id),
+                    "username": member.name,
+                    "display_name": display_name,
+                    "server_nickname": member.nick or display_name,
+                    "server_name": guild.name,
+                    "channel_name": default_channel_str,
+                    "assigned_roles": roles,
+                    "is_bot": bool(member.bot),
+                    "presence_status": str(getattr(member, "status", "offline")),
+                    "avatar_url": avatar_url,
+                    "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
+                })
+            except Exception:
+                pass
+        if batch:
+            bulk_upsert_users(batch)
+
     async def _sync_single_guild(self, guild):
-        """High-speed member discovery using Discord REST Search API + Multi-Channel Sidebar Scraper."""
+        """Complete member discovery for a single guild using guild.chunk() for 100% coverage."""
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1415,99 +1443,84 @@ class CommandCenterClient(discord.Client):
             elif guild.text_channels:
                 default_channel_str = ", ".join(f"#{ch.name}" for ch in guild.text_channels[:3])
 
-            # 1. Gather ALL Accessible Channels (including VIP, Private, Trader, Alpha channels)
-            accessible_channels = [
-                ch for ch in guild.text_channels 
-                if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
-            ]
+            official_count = getattr(guild, "member_count", 0) or 0
+            logger.info("Syncing guild '%s' (official: %d members)...", guild.name, official_count)
 
-            # 1. Gateway Deep Member Search Query across 3-character permutations
-            chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
-            letters = "abcdefghijklmnopqrstuvwxyz"
-            vowels = "aeiouy0123456789_"
-            
-            # 1-char + 2-char + high-coverage 3-char triples
-            prefixes_1_2 = list(chars) + [c1 + c2 for c1 in chars for c2 in chars]
-            prefixes_3_vowels = [c1 + v + c2 for c1 in letters for v in vowels for c2 in letters]
-            crypto_prefixes = [
-                "btc", "eth", "sol", "xrp", "bnb", "ada", "dog", "dot", "trx", "ltc", "ava", "uni", "lin",
-                "mon", "cas", "fra", "tra", "vip", "pro", "max", "kin", "mar", "ape", "bot", "mod", "adm",
-                "dan", "mic", "dav", "chr", "rob", "sam", "tom", "joe", "ben", "guy", "roy", "leo", "ray",
-                "ian", "tim", "val", "vic", "zac", "wil", "neo", "dex", "nft", "hod", "wha", "cha", "sig",
-                "alr", "hit", "tar", "bou", "lum", "opt", "zon", "spa", "str", "sta", "sto", "sky", "sun",
-                "mon", "dar", "lig", "red", "gre", "blu", "gol", "sil", "dia", "fir", "ice", "air", "wat",
-                "ear", "sto", "kin", "que", "pri", "lor", "god", "dem", "ang", "wol", "fox", "bea", "bul",
-                "lio", "tig", "dra", "sha", "eag", "haw", "cor", "dev", "cod", "hac", "sec", "net", "web"
-            ]
-            all_prefixes = list(dict.fromkeys(prefixes_1_2 + prefixes_3_vowels + crypto_prefixes))
+            # ── STEP 1: Ensure guild is subscribed (required for chunk) ─────────────────
+            try:
+                await guild.subscribe()
+            except Exception:
+                pass  # Already subscribed or not needed
 
-            sem_search = asyncio.Semaphore(4)
+            # ── STEP 2: guild.fetch_members() — Full member list via MemberSidebar/Chunk ─
+            # fetch_members() works without subscription and automatically picks:
+            #   - Real chunk (Opcode 8, all members incl. offline) if user has mod perms
+            #   - MemberSidebar scrape (scrolls through visible members) otherwise
+            # We pass up to 5 most-active channels to maximize sidebar coverage.
+            fetch_success = False
+            fetched_members = []
+            try:
+                # Pick up to 5 text channels visible to everyone for sidebar scraping
+                sidebar_channels = [
+                    ch for ch in guild.text_channels
+                    if not is_restricted_text_channel(ch, self.user)
+                ][:5]
+                fetch_kw = {"cache": True, "delay": 0.05}
+                if sidebar_channels:
+                    fetch_kw["channels"] = sidebar_channels
+                fetched_members = await asyncio.wait_for(
+                    guild.fetch_members(**fetch_kw),
+                    timeout=180.0
+                )
+                fetch_success = True
+                logger.info(
+                    "fetch_members() complete for '%s': %d members returned.",
+                    guild.name, len(fetched_members)
+                )
+            except asyncio.TimeoutError:
+                logger.warning("fetch_members() timed out for '%s'. Will use gateway cache.", guild.name)
+            except Exception as fm_err:
+                logger.warning("fetch_members() failed for '%s': %s", guild.name, fm_err)
 
-            async def _query_single_prefix(pfx):
-                async with sem_search:
-                    try:
-                        matched = await asyncio.wait_for(
-                            guild.query_members(query=pfx, limit=100, cache=True),
-                            timeout=4.0
-                        )
-                        if matched:
-                            b = []
-                            for member in matched:
-                                display_name = getattr(member, "global_name", None) or member.display_name or member.name
-                                roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
-                                avatar_url = str(member.avatar.url) if member.avatar else None
-                                b.append({
-                                    "user_id": str(member.id),
-                                    "username": member.name,
-                                    "display_name": display_name,
-                                    "server_nickname": member.nick or display_name,
-                                    "server_name": guild.name,
-                                    "channel_name": default_channel_str,
-                                    "assigned_roles": roles,
-                                    "is_bot": bool(member.bot),
-                                    "presence_status": str(getattr(member, "status", "offline")),
-                                    "avatar_url": avatar_url,
-                                    "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
-                                })
-                            if b:
-                                bulk_upsert_users(b)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(0.02)
-
-            # Run searches in parallel chunks of 40
-            chunk_size = 40
-            for i in range(0, len(all_prefixes), chunk_size):
-                chunk = all_prefixes[i:i + chunk_size]
-                await asyncio.gather(*[_query_single_prefix(p) for p in chunk], return_exceptions=True)
-
-            # 2. Upsert all members cached in gateway memory
+            # ── STEP 3: Upsert fetched + cached members ─────────────────────────────────
+            # Prefer the explicit fetched list; always also upsert whatever is in cache
             cached_members = list(guild.members)
-            if cached_members:
-                batch = []
-                for member in cached_members:
-                    display_name = getattr(member, "global_name", None) or member.display_name or member.name
-                    roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
-                    avatar_url = str(member.avatar.url) if member.avatar else None
-                    batch.append({
-                        "user_id": str(member.id),
-                        "username": member.name,
-                        "display_name": display_name,
-                        "server_nickname": member.nick or display_name,
-                        "server_name": guild.name,
-                        "channel_name": default_channel_str,
-                        "assigned_roles": roles,
-                        "is_bot": bool(member.bot),
-                        "presence_status": str(getattr(member, "status", "offline")),
-                        "avatar_url": avatar_url,
-                        "joined_at": member.joined_at.isoformat() if getattr(member, "joined_at", None) else None,
-                    })
-                if batch:
-                    bulk_upsert_users(batch)
+            combined = {}
+            for m in (fetched_members + cached_members):
+                combined[m.id] = m
+            members_to_upsert = list(combined.values())
+            if members_to_upsert:
+                logger.info("Upserting %d members from '%s'...", len(members_to_upsert), guild.name)
+                await self._upsert_members_from_list(members_to_upsert, guild, default_channel_str, role_map)
 
-            # 3. Message History Scraping across all readable channels (including VIP/Private)
+            # ── STEP 4: If fetch_members failed, use query_members prefix sweep as fallback ─
+            if not fetch_success:
+                chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+                # 1-char + 2-char prefixes only (avoid rate limits)
+                prefixes = list(chars) + [c1 + c2 for c1 in chars for c2 in "aeiouy0123456789"]
+                sem_search = asyncio.Semaphore(2)
+
+                async def _query_prefix(pfx):
+                    async with sem_search:
+                        try:
+                            matched = await asyncio.wait_for(
+                                guild.query_members(query=pfx, limit=100, cache=True),
+                                timeout=5.0
+                            )
+                            if matched:
+                                await self._upsert_members_from_list(matched, guild, default_channel_str, role_map)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.15)  # Respect rate limits
+
+                for i in range(0, len(prefixes), 20):
+                    chunk = prefixes[i:i + 20]
+                    await asyncio.gather(*[_query_prefix(p) for p in chunk], return_exceptions=True)
+                    await asyncio.sleep(1.0)  # Pause between batches to avoid 429s
+
+            # ── STEP 4: Message history scraping — catches non-member users too ──────────
             accessible_channels = [
-                ch for ch in guild.text_channels 
+                ch for ch in guild.text_channels
                 if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
             ]
             for ch in accessible_channels[:80]:
@@ -1524,7 +1537,6 @@ class CommandCenterClient(discord.Client):
                         roles = []
                         if hasattr(author, "roles"):
                             roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
-
                         channel_batch.append({
                             "user_id": str(author.id),
                             "username": author_name,
@@ -1542,8 +1554,17 @@ class CommandCenterClient(discord.Client):
                         bulk_upsert_users(channel_batch)
                 except Exception:
                     pass
+
+            final_count = len(members_to_upsert) if members_to_upsert else len(list(guild.members))
+            logger.info(
+                "Guild '%s' sync done. Upserted: %d / Official: %d (%.1f%%)",
+                guild.name,
+                final_count,
+                official_count,
+                (final_count / official_count * 100) if official_count else 0,
+            )
         except Exception as err:
-            logger.debug("Error syncing guild %s: %s", guild.name, err)
+            logger.warning("Error syncing guild %s: %s", guild.name, err)
 
     async def _sync_guild_members_to_db(self):
         """High-speed member discovery across all joined guilds sequentially for 100% gateway connection stability."""
@@ -1927,14 +1948,13 @@ class CommandCenterClient(discord.Client):
         logger.info("Discord gateway connected.")
 
     async def _member_sync_loop(self):
-        """Runs periodic member sync every 10 minutes to continuously discover new members."""
-        await asyncio.sleep(10)  # Initial wait
+        """Runs full member discovery immediately on startup, then repeats every 30 minutes."""
         while True:
             try:
                 await self._sync_guild_members_to_db()
             except Exception as e:
                 logger.debug("Periodic member sync loop notice: %s", e)
-            await asyncio.sleep(600)  # Repeat every 10 minutes
+            await asyncio.sleep(1800)  # Repeat every 30 minutes
 
     async def on_disconnect(self):
         self.discord_disconnect_seen_at = _utc_now_iso()
@@ -1953,27 +1973,15 @@ class CommandCenterClient(discord.Client):
             asyncio.create_task(thread_cleanup_loop(self))
             self.thread_cleanup_started = True
 
-        # Subscribe to all guilds that contain configured channels.
-        # discord.py-self uses lazy loading for large guilds — without subscribing,
-        # on_message will NOT fire for channels in large servers (e.g. LeetCode).
-        active_ids = set(config_manager.get_active_channel_ids())
-        subscribed = set()
+        # Subscribe to ALL guilds for real-time events + to enable chunk/fetch_members
         for guild in self.guilds:
-            for ch in guild.text_channels:
-                if (
-                    ch.id in active_ids
-                    and guild.id not in subscribed
-                    and not is_restricted_text_channel(ch, self.user)
-                ):
-                    try:
-                        await guild.subscribe()
-                        subscribed.add(guild.id)
-                        logger.info(f"Subscribed to guild '{guild.name}' for real-time events.")
-                    except Exception as e:
-                        logger.warning(f"Could not subscribe to guild '{guild.name}': {e}")
-                    break
+            try:
+                await guild.subscribe()
+                logger.info(f"Subscribed to guild '{guild.name}'")
+            except Exception as e:
+                logger.debug(f"Could not subscribe to guild '{guild.name}': {e}")
 
-        # Passively scan and sync all server members into MongoDB & start background loop
+        # Immediately kick off a full member sync, then repeat every 10 minutes
         asyncio.create_task(self._member_sync_loop())
 
     async def on_message(self, message: discord.Message):

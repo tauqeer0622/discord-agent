@@ -1518,11 +1518,11 @@ class CommandCenterClient(discord.Client):
             START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-")
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
-            SAVE_EVERY   = 25   # Save progress to MongoDB every N queries
+            SAVE_EVERY   = 15   # Save progress to MongoDB every N queries (more frequent with concurrent guilds)
             BATCH_SIZE   = 6    # Prefixes per gather batch
-            CONCURRENCY  = 3    # Max concurrent gateway queries
+            CONCURRENCY  = 3    # Max concurrent gateway queries per guild
             DELAY_MS     = 0.2  # Seconds between queries (inside semaphore)
-            BATCH_PAUSE  = 1.5  # Seconds between batches
+            BATCH_PAUSE  = 0.8  # Seconds between batches (reduced - 17 guilds concurrent)
 
             # Load previously scanned prefixes from MongoDB
             visited = get_scanned_prefixes(guild_id)
@@ -1545,7 +1545,7 @@ class CommandCenterClient(discord.Client):
                     try:
                         result = await asyncio.wait_for(
                             guild.query_members(query=prefix, limit=100, cache=True),
-                            timeout=12.0
+                            timeout=8.0
                         )
                         await asyncio.sleep(DELAY_MS)
                         return result
@@ -1686,7 +1686,15 @@ class CommandCenterClient(discord.Client):
                 pass
 
     async def _sync_guild_members_to_db(self):
-        """Member discovery across all joined guilds."""
+        """
+        Discover members across ALL guilds CONCURRENTLY.
+
+        Previously sequential: guild1 → guild2 → guild3 ...
+        Render would restart after guild1, so guild2-17 were NEVER synced.
+
+        Now: all guilds start their prefix search in parallel.
+        Each guild saves its own progress to MongoDB, so each resumes independently.
+        """
         if not self.is_ready() or not self.guilds:
             return
         if getattr(self, "_syncing_members", False):
@@ -1694,15 +1702,25 @@ class CommandCenterClient(discord.Client):
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            logger.info("Starting member discovery sweep across %d guilds...", len(guild_list))
-            for guild in guild_list:
-                await self._sync_single_guild(guild)
-                await asyncio.sleep(0.5)
-            logger.info("Member discovery sweep complete.")
+            # Sort: largest guilds first (most value first)
+            guild_list.sort(key=lambda g: getattr(g, "member_count", 0) or 0, reverse=True)
+            logger.info(
+                "Starting CONCURRENT member discovery across %d guilds: %s",
+                len(guild_list),
+                [g.name for g in guild_list[:5]]
+            )
+
+            # Run ALL guilds concurrently (gateway can handle it)
+            await asyncio.gather(
+                *[self._sync_single_guild(g) for g in guild_list],
+                return_exceptions=True
+            )
+            logger.info("All guild syncs complete.")
         except Exception as exc:
             logger.warning("Background user sync warning: %s", exc)
         finally:
             self._syncing_members = False
+
 
     async def handle_get_users(self, request):
         """Return paginated, deduplicated members from MongoDB with instant filtering."""

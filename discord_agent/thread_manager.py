@@ -201,7 +201,7 @@ async def cleanup_expired_threads(client: discord.Client):
         if thread:
             try:
                 await thread.delete()
-            except discord.NotFound:
+            except (discord.NotFound, discord.Forbidden):
                 pass
             except Exception:
                 logger.exception("Could not delete expired thread %s", thread_id)

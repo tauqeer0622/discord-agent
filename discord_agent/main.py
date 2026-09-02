@@ -1434,9 +1434,34 @@ class CommandCenterClient(discord.Client):
         if batch:
             bulk_upsert_users(batch)
 
-    async def _sync_single_guild(self, guild, global_gw_sem=None):
+class GatewayRateLimiter:
+    """
+    Paces gateway query_members calls to strictly respect Discord's rate limit
+    (120 commands / 60 seconds max). Guarantees steady, non-bursting throughput
+    without triggering socket throttling, 429s, or dropped responses.
+    """
+    def __init__(self, min_interval: float = 0.55, max_concurrent: int = 2):
+        self.min_interval = min_interval
+        self.sem = asyncio.Semaphore(max_concurrent)
+        self.lock = asyncio.Lock()
+        self.last_call = 0.0
+
+    async def acquire(self):
+        await self.sem.acquire()
+        async with self.lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - self.last_call
+            if elapsed < self.min_interval:
+                await asyncio.sleep(self.min_interval - elapsed)
+            self.last_call = asyncio.get_event_loop().time()
+
+    def release(self):
+        self.sem.release()
+
+
+    async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
         """
-        Maximum member discovery with PERSISTENT PROGRESS.
+        Maximum member discovery with PERSISTENT PROGRESS and SAFE PACING.
 
         The adaptive prefix search saves its progress to MongoDB after every batch,
         so if Render restarts mid-search, the next run picks up where it left off
@@ -1448,8 +1473,8 @@ class CommandCenterClient(discord.Client):
              - Starts with a-z, 0-9, _, ., -
              - Skips prefixes already scanned (loaded from MongoDB)
              - If a prefix returns 100 (the limit) → subdivide into deeper prefixes
-             - Progress saved to MongoDB every 25 queries
-          3. Message history scraping
+             - Progress saved to MongoDB every 15 queries
+          3. Paced message history scraping
         """
         from collections import deque
 
@@ -1481,13 +1506,13 @@ class CommandCenterClient(discord.Client):
                 sidebar_channels = [
                     ch for ch in guild.text_channels
                     if not is_restricted_text_channel(ch, self.user)
-                ][:5]
-                fetch_kw = {"cache": True, "delay": 0.05}
+                ][:3]
+                fetch_kw = {"cache": True, "delay": 0.2}
                 if sidebar_channels:
                     fetch_kw["channels"] = sidebar_channels
                 fetched_members = await asyncio.wait_for(
                     guild.fetch_members(**fetch_kw),
-                    timeout=180.0
+                    timeout=90.0
                 )
                 logger.info("fetch_members() done for '%s': %d online members.", guild.name, len(fetched_members))
             except Exception as fm_err:
@@ -1507,22 +1532,12 @@ class CommandCenterClient(discord.Client):
                 logger.info("Upserted %d online members for '%s'.", len(seen_ids), guild.name)
 
             # ── STEP 4: Adaptive prefix tree with PERSISTENT PROGRESS ────────────────────
-            #
-            # Key insight: query_members(query="ab", limit=100) returns ALL members with
-            # username/nick starting "ab", including offline — but capped at 100.
-            # When we hit the cap, we subdivide: "aba", "abb", "abc"...
-            #
-            # Persistent: we store "visited" prefixes in MongoDB so Render restarts
-            # don't reset the entire search.
-
             START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-")
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
-            SAVE_EVERY   = 15   # Save progress to MongoDB every N queries (more frequent with concurrent guilds)
-            BATCH_SIZE   = 6    # Prefixes per gather batch
-            CONCURRENCY  = 3    # Max concurrent gateway queries per guild
-            DELAY_MS     = 0.2  # Seconds between queries (inside semaphore)
-            BATCH_PAUSE  = 0.8  # Seconds between batches (reduced - 17 guilds concurrent)
+            SAVE_EVERY   = 15   # Save progress to MongoDB every N queries
+            BATCH_SIZE   = 4    # Prefixes per gather batch
+            BATCH_PAUSE  = 0.4  # Pause between query batches
 
             # Load previously scanned prefixes AND saved queue from MongoDB
             visited, saved_queue = get_scanned_prefixes(guild_id)
@@ -1536,20 +1551,13 @@ class CommandCenterClient(discord.Client):
                     guild.name, resume_count, len(queue)
                 )
             elif resume_count and not saved_queue:
-                # No queue saved — could be:
-                #  A) Stale old-format (old code ran, only saved visited set)
-                #  B) Search legitimately completed (final save always writes queue=[])
-                #
-                # Stage 1 — Queue Reconstruction:
-                # Look for parents in visited that have SOME visited children.
-                # Those parents were expanded and their unvisited children belong in queue.
+                # No queue saved — reconstruct or check for stale scan
                 reconstructed = []
                 for pfx in visited:
                     if len(pfx) < MAX_DEPTH:
                         children = [(pfx + c) for c in EXPAND_CHARS]
                         visited_children = [c for c in children if c in visited]
                         if visited_children:
-                            # Parent was expanded — add unvisited siblings to queue
                             for c in children:
                                 if c not in visited:
                                     reconstructed.append(c)
@@ -1560,54 +1568,42 @@ class CommandCenterClient(discord.Client):
                         "Recovered lost queue for '%s': %d unvisited sub-prefixes reconstructed.",
                         guild.name, len(queue)
                     )
-
-                # Stage 2 — Stale Reset:
-                # If no children could be reconstructed, but guild is large and visited
-                # contains ONLY 1-char START_CHARS, the entire sub-prefix queue was lost.
-                # (Large guilds always produce > 100 results per letter → subdivision is needed.)
                 elif all(len(p) == 1 for p in visited) and official_count > 2000:
                     logger.info(
-                        "Stale scan detected for '%s' (%d official, %d 1-char prefixes, no queue). "
-                        "Sub-prefix queue was lost by old code. Resetting to fresh scan.",
+                        "Stale scan detected for '%s' (%d official, %d 1-char prefixes, no queue). Resetting to fresh scan.",
                         guild.name, official_count, len(visited)
                     )
                     visited = set()
                     queue = deque(START_CHARS)
-
                 else:
-                    # Search genuinely complete — all prefixes exhausted
                     queue = deque()
                     logger.info(
                         "Prefix search already complete for '%s' (%d prefixes visited).",
                         guild.name, resume_count
                     )
             else:
-                # No saved state at all — fresh start
                 queue = deque(START_CHARS)
                 logger.info("Starting fresh prefix search for '%s'.", guild.name)
 
             offline_found = 0
             total_queries = 0
-            sem = asyncio.Semaphore(CONCURRENCY)
 
             async def _do_query(prefix):
                 nonlocal total_queries
-                # Acquire global semaphore first (shared across all guilds)
-                # then local semaphore (per-guild limit)
-                async with (global_gw_sem or asyncio.Semaphore(CONCURRENCY)):
-                    async with sem:
-                        try:
-                            result = await asyncio.wait_for(
-                                guild.query_members(query=prefix, limit=100, cache=True),
-                                timeout=8.0
-                            )
-                            await asyncio.sleep(DELAY_MS)
-                            return result
-                        except Exception:
-                            await asyncio.sleep(DELAY_MS)
-                            return None
-                        finally:
-                            total_queries += 1
+                if rate_limiter:
+                    await rate_limiter.acquire()
+                try:
+                    result = await asyncio.wait_for(
+                        guild.query_members(query=prefix, limit=100, cache=True),
+                        timeout=8.0
+                    )
+                    return result
+                except Exception:
+                    return None
+                finally:
+                    if rate_limiter:
+                        rate_limiter.release()
+                    total_queries += 1
 
             logger.info(
                 "Adaptive prefix search for '%s' starting: %d pending in queue, %d already visited.",
@@ -1615,7 +1611,6 @@ class CommandCenterClient(discord.Client):
             )
 
             while queue:
-                # Build a batch
                 batch = []
                 while queue and len(batch) < BATCH_SIZE:
                     pfx = queue.popleft()
@@ -1625,7 +1620,6 @@ class CommandCenterClient(discord.Client):
                 if not batch:
                     continue
 
-                # Mark as visited before querying (prevents duplicates on retry)
                 for pfx in batch:
                     visited.add(pfx)
 
@@ -1636,14 +1630,12 @@ class CommandCenterClient(discord.Client):
                     if not isinstance(matched, list):
                         continue
 
-                    # Collect new members
                     for m in matched:
                         if m.id not in seen_ids:
                             seen_ids[m.id] = True
                             new_batch.append(m)
                             offline_found += 1
 
-                    # If hit limit → subdivide (only if under max depth)
                     if len(matched) >= 100 and len(pfx) < MAX_DEPTH:
                         for c in EXPAND_CHARS:
                             sub = pfx + c
@@ -1653,7 +1645,6 @@ class CommandCenterClient(discord.Client):
                 if new_batch:
                     await self._upsert_members_from_list(new_batch, guild, default_channel_str, role_map)
 
-                # Persist progress + queue periodically
                 if total_queries % SAVE_EVERY == 0:
                     save_scanned_prefixes(guild_id, visited, list(queue))
                     total_found_so_far = len(seen_ids)
@@ -1676,7 +1667,6 @@ class CommandCenterClient(discord.Client):
                 if queue:
                     await asyncio.sleep(BATCH_PAUSE)
 
-            # Save final state (queue is empty since search is done)
             save_scanned_prefixes(guild_id, visited, [])
             total_found = len(seen_ids)
             save_sync_status(guild_id, guild.name, {
@@ -1697,55 +1687,46 @@ class CommandCenterClient(discord.Client):
                 offline_found,
             )
 
-            # ── STEP 5: Message history scraping — lightweight top-up only ─────────────
-            # Skip if prefix search already gave us good coverage (>80%) — no need to
-            # blast the REST API for marginal gains. With 17 guilds concurrent, too
-            # many history calls cause 429s for all other operations.
-            history_coverage = (total_found / official_count) if official_count else 1.0
-            if history_coverage < 0.80:
-                accessible_channels = [
-                    ch for ch in guild.text_channels
-                    if ch.permissions_for(guild.me).read_message_history
-                    or ch.permissions_for(guild.me).read_messages
-                ]
-                # Cap at 8 channels (was 80) and 100 messages (was 500) per channel.
-                # Delay 0.5s between channels to stay well under REST rate limits.
-                for ch in accessible_channels[:8]:
-                    try:
-                        channel_batch = []
-                        async for msg in ch.history(limit=100):
-                            author = msg.author
-                            if not author:
-                                continue
-                            author_name = getattr(author, "name", "Unknown")
-                            display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name
-                            server_nick = getattr(author, "nick", None) or display_name
-                            avatar_url = str(author.avatar.url) if getattr(author, "avatar", None) else None
-                            roles = []
-                            if hasattr(author, "roles"):
-                                roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
-                            channel_batch.append({
-                                "user_id": str(author.id),
-                                "username": author_name,
-                                "display_name": display_name,
-                                "server_nickname": server_nick,
-                                "server_name": guild.name,
-                                "channel_name": f"#{ch.name}",
-                                "assigned_roles": roles,
-                                "is_bot": bool(getattr(author, "bot", False)),
-                                "presence_status": str(getattr(author, "status", "offline")),
-                                "avatar_url": avatar_url,
-                                "joined_at": author.joined_at.isoformat() if getattr(author, "joined_at", None) else None,
-                            })
-                        if channel_batch:
-                            bulk_upsert_users(channel_batch)
-                        await asyncio.sleep(0.5)   # Throttle: stay under REST rate limit
-                    except Exception:
-                        pass
+            # ── STEP 5: Paced message history scraping (top channels only) ─────────────────
+            accessible_channels = [
+                ch for ch in guild.text_channels
+                if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
+            ][:15]
+            for ch in accessible_channels:
+                try:
+                    channel_batch = []
+                    async for msg in ch.history(limit=100):
+                        author = msg.author
+                        if not author:
+                            continue
+                        author_name = getattr(author, "name", "Unknown")
+                        display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name
+                        server_nick = getattr(author, "nick", None) or display_name
+                        avatar_url = str(author.avatar.url) if getattr(author, "avatar", None) else None
+                        roles = []
+                        if hasattr(author, "roles"):
+                            roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
+                        channel_batch.append({
+                            "user_id": str(author.id),
+                            "username": author_name,
+                            "display_name": display_name,
+                            "server_nickname": server_nick,
+                            "server_name": guild.name,
+                            "channel_name": f"#{ch.name}",
+                            "assigned_roles": roles,
+                            "is_bot": bool(getattr(author, "bot", False)),
+                            "presence_status": str(getattr(author, "status", "offline")),
+                            "avatar_url": avatar_url,
+                            "joined_at": author.joined_at.isoformat() if getattr(author, "joined_at", None) else None,
+                        })
+                    if channel_batch:
+                        bulk_upsert_users(channel_batch)
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
 
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)
-            # Save whatever progress + queue we have even on error
             try:
                 _q = queue if "queue" in dir() else []
                 save_scanned_prefixes(guild_id, visited, list(_q))
@@ -1754,13 +1735,9 @@ class CommandCenterClient(discord.Client):
 
     async def _sync_guild_members_to_db(self):
         """
-        Discover members across ALL guilds CONCURRENTLY.
-
-        Previously sequential: guild1 → guild2 → guild3 ...
-        Render would restart after guild1, so guild2-17 were NEVER synced.
-
-        Now: all guilds start their prefix search in parallel.
-        Each guild saves its own progress to MongoDB, so each resumes independently.
+        Discover members across all guilds with safe pacing and worker pool concurrency.
+        Runs up to 2 guilds simultaneously to avoid channel member list collisions,
+        while all gateway queries are rate-limited to safely stay within Discord's 120/min budget.
         """
         if not self.is_ready() or not self.guilds:
             return
@@ -1769,23 +1746,24 @@ class CommandCenterClient(discord.Client):
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            # Sort: largest guilds first (most value first)
             guild_list.sort(key=lambda g: getattr(g, "member_count", 0) or 0, reverse=True)
             logger.info(
-                "Starting CONCURRENT member discovery across %d guilds: %s",
+                "Starting paced member discovery across %d guilds (priority: %s)...",
                 len(guild_list),
                 [g.name for g in guild_list[:5]]
             )
 
-            # Global gateway semaphore: Discord gateway allows 120 events/60s total.
-            # With 17 guilds each sending Opcode 8 queries concurrently, we'd saturate
-            # the budget instantly. This shared semaphore limits total in-flight queries
-            # to 10 across ALL guilds, keeping gateway headroom for other events.
-            global_gw_sem = asyncio.Semaphore(10)
+            # Global gateway rate limiter: max 2 in-flight, min 0.55s between queries
+            rate_limiter = GatewayRateLimiter(min_interval=0.55, max_concurrent=2)
+            # Process up to 2 guilds in parallel
+            guild_pool_sem = asyncio.Semaphore(2)
 
-            # Run ALL guilds concurrently (gateway can handle it)
+            async def _guild_worker(g):
+                async with guild_pool_sem:
+                    await self._sync_single_guild(g, rate_limiter)
+
             await asyncio.gather(
-                *[self._sync_single_guild(g, global_gw_sem) for g in guild_list],
+                *[_guild_worker(g) for g in guild_list],
                 return_exceptions=True
             )
             logger.info("All guild syncs complete.")
@@ -1793,6 +1771,7 @@ class CommandCenterClient(discord.Client):
             logger.warning("Background user sync warning: %s", exc)
         finally:
             self._syncing_members = False
+
 
 
     async def handle_get_users(self, request):

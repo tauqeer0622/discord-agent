@@ -1527,23 +1527,65 @@ class CommandCenterClient(discord.Client):
             # Load previously scanned prefixes AND saved queue from MongoDB
             visited, saved_queue = get_scanned_prefixes(guild_id)
             resume_count = len(visited)
-            if resume_count:
-                if saved_queue:
-                    queue = deque(saved_queue)
+
+            if resume_count and saved_queue:
+                # Perfect resume: both visited and queue saved by new code
+                queue = deque(saved_queue)
+                logger.info(
+                    "Resuming '%s': %d visited, %d pending in queue.",
+                    guild.name, resume_count, len(queue)
+                )
+            elif resume_count and not saved_queue:
+                # No queue saved — could be:
+                #  A) Stale old-format (old code ran, only saved visited set)
+                #  B) Search legitimately completed (final save always writes queue=[])
+                #
+                # Stage 1 — Queue Reconstruction:
+                # Look for parents in visited that have SOME visited children.
+                # Those parents were expanded and their unvisited children belong in queue.
+                reconstructed = []
+                for pfx in visited:
+                    if len(pfx) < MAX_DEPTH:
+                        children = [(pfx + c) for c in EXPAND_CHARS]
+                        visited_children = [c for c in children if c in visited]
+                        if visited_children:
+                            # Parent was expanded — add unvisited siblings to queue
+                            for c in children:
+                                if c not in visited:
+                                    reconstructed.append(c)
+
+                if reconstructed:
+                    queue = deque(reconstructed)
                     logger.info(
-                        "Resuming prefix search for '%s' — %d visited, %d pending in queue.",
-                        guild.name, resume_count, len(queue)
+                        "Recovered lost queue for '%s': %d unvisited sub-prefixes reconstructed.",
+                        guild.name, len(queue)
                     )
-                else:
-                    # Old-format saved data (queue not persisted): fall back to unvisited START_CHARS
-                    queue = deque(p for p in START_CHARS if p not in visited)
+
+                # Stage 2 — Stale Reset:
+                # If no children could be reconstructed, but guild is large and visited
+                # contains ONLY 1-char START_CHARS, the entire sub-prefix queue was lost.
+                # (Large guilds always produce > 100 results per letter → subdivision is needed.)
+                elif all(len(p) == 1 for p in visited) and official_count > 2000:
                     logger.info(
-                        "Resuming prefix search for '%s' — %d visited, queue rebuilt from START_CHARS (%d remaining).",
-                        guild.name, resume_count, len(queue)
+                        "Stale scan detected for '%s' (%d official, %d 1-char prefixes, no queue). "
+                        "Sub-prefix queue was lost by old code. Resetting to fresh scan.",
+                        guild.name, official_count, len(visited)
+                    )
+                    visited = set()
+                    queue = deque(START_CHARS)
+
+                else:
+                    # Search genuinely complete — all prefixes exhausted
+                    queue = deque()
+                    logger.info(
+                        "Prefix search already complete for '%s' (%d prefixes visited).",
+                        guild.name, resume_count
                     )
             else:
+                # No saved state at all — fresh start
                 queue = deque(START_CHARS)
                 logger.info("Starting fresh prefix search for '%s'.", guild.name)
+
             offline_found = 0
             total_queries = 0
             sem = asyncio.Semaphore(CONCURRENCY)

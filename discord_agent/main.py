@@ -355,6 +355,31 @@ async def _watch_discord_startup(client, timeout_seconds=120):
     logger.warning(client.discord_last_error)
 
 
+class GatewayRateLimiter:
+    """
+    Paces gateway query_members calls to strictly respect Discord's rate limit
+    (120 commands / 60 seconds max). Guarantees steady, non-bursting throughput
+    without triggering socket throttling, 429s, or dropped responses.
+    """
+    def __init__(self, min_interval: float = 0.55, max_concurrent: int = 2):
+        self.min_interval = min_interval
+        self.sem = asyncio.Semaphore(max_concurrent)
+        self.lock = asyncio.Lock()
+        self.last_call = 0.0
+
+    async def acquire(self):
+        await self.sem.acquire()
+        async with self.lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - self.last_call
+            if elapsed < self.min_interval:
+                await asyncio.sleep(self.min_interval - elapsed)
+            self.last_call = asyncio.get_event_loop().time()
+
+    def release(self):
+        self.sem.release()
+
+
 class CommandCenterClient(discord.Client):
     def __init__(self):
         super().__init__()
@@ -1433,31 +1458,6 @@ class CommandCenterClient(discord.Client):
                 pass
         if batch:
             bulk_upsert_users(batch)
-
-class GatewayRateLimiter:
-    """
-    Paces gateway query_members calls to strictly respect Discord's rate limit
-    (120 commands / 60 seconds max). Guarantees steady, non-bursting throughput
-    without triggering socket throttling, 429s, or dropped responses.
-    """
-    def __init__(self, min_interval: float = 0.55, max_concurrent: int = 2):
-        self.min_interval = min_interval
-        self.sem = asyncio.Semaphore(max_concurrent)
-        self.lock = asyncio.Lock()
-        self.last_call = 0.0
-
-    async def acquire(self):
-        await self.sem.acquire()
-        async with self.lock:
-            now = asyncio.get_event_loop().time()
-            elapsed = now - self.last_call
-            if elapsed < self.min_interval:
-                await asyncio.sleep(self.min_interval - elapsed)
-            self.last_call = asyncio.get_event_loop().time()
-
-    def release(self):
-        self.sem.release()
-
 
     async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
         """

@@ -1697,42 +1697,51 @@ class CommandCenterClient(discord.Client):
                 offline_found,
             )
 
-            # ── STEP 5: Message history scraping — catches any remaining users ────────────
-            accessible_channels = [
-                ch for ch in guild.text_channels
-                if ch.permissions_for(guild.me).read_message_history or ch.permissions_for(guild.me).read_messages
-            ]
-            for ch in accessible_channels[:80]:
-                try:
-                    channel_batch = []
-                    async for msg in ch.history(limit=500):
-                        author = msg.author
-                        if not author:
-                            continue
-                        author_name = getattr(author, "name", "Unknown")
-                        display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name
-                        server_nick = getattr(author, "nick", None) or display_name
-                        avatar_url = str(author.avatar.url) if getattr(author, "avatar", None) else None
-                        roles = []
-                        if hasattr(author, "roles"):
-                            roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
-                        channel_batch.append({
-                            "user_id": str(author.id),
-                            "username": author_name,
-                            "display_name": display_name,
-                            "server_nickname": server_nick,
-                            "server_name": guild.name,
-                            "channel_name": f"#{ch.name}",
-                            "assigned_roles": roles,
-                            "is_bot": bool(getattr(author, "bot", False)),
-                            "presence_status": str(getattr(author, "status", "offline")),
-                            "avatar_url": avatar_url,
-                            "joined_at": author.joined_at.isoformat() if getattr(author, "joined_at", None) else None,
-                        })
-                    if channel_batch:
-                        bulk_upsert_users(channel_batch)
-                except Exception:
-                    pass
+            # ── STEP 5: Message history scraping — lightweight top-up only ─────────────
+            # Skip if prefix search already gave us good coverage (>80%) — no need to
+            # blast the REST API for marginal gains. With 17 guilds concurrent, too
+            # many history calls cause 429s for all other operations.
+            history_coverage = (total_found / official_count) if official_count else 1.0
+            if history_coverage < 0.80:
+                accessible_channels = [
+                    ch for ch in guild.text_channels
+                    if ch.permissions_for(guild.me).read_message_history
+                    or ch.permissions_for(guild.me).read_messages
+                ]
+                # Cap at 8 channels (was 80) and 100 messages (was 500) per channel.
+                # Delay 0.5s between channels to stay well under REST rate limits.
+                for ch in accessible_channels[:8]:
+                    try:
+                        channel_batch = []
+                        async for msg in ch.history(limit=100):
+                            author = msg.author
+                            if not author:
+                                continue
+                            author_name = getattr(author, "name", "Unknown")
+                            display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name
+                            server_nick = getattr(author, "nick", None) or display_name
+                            avatar_url = str(author.avatar.url) if getattr(author, "avatar", None) else None
+                            roles = []
+                            if hasattr(author, "roles"):
+                                roles = [role_map.get(r.id, r.name) for r in author.roles if r.name != "@everyone"]
+                            channel_batch.append({
+                                "user_id": str(author.id),
+                                "username": author_name,
+                                "display_name": display_name,
+                                "server_nickname": server_nick,
+                                "server_name": guild.name,
+                                "channel_name": f"#{ch.name}",
+                                "assigned_roles": roles,
+                                "is_bot": bool(getattr(author, "bot", False)),
+                                "presence_status": str(getattr(author, "status", "offline")),
+                                "avatar_url": avatar_url,
+                                "joined_at": author.joined_at.isoformat() if getattr(author, "joined_at", None) else None,
+                            })
+                        if channel_batch:
+                            bulk_upsert_users(channel_batch)
+                        await asyncio.sleep(0.5)   # Throttle: stay under REST rate limit
+                    except Exception:
+                        pass
 
         except Exception as err:
             logger.warning("Error syncing guild %s: %s", guild.name, err)

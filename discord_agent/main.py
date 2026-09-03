@@ -1507,12 +1507,12 @@ class CommandCenterClient(discord.Client):
                     ch for ch in guild.text_channels
                     if not is_restricted_text_channel(ch, self.user)
                 ][:3]
-                fetch_kw = {"cache": True, "delay": 0.2}
+                fetch_kw = {"cache": False, "delay": 0.2}
                 if sidebar_channels:
                     fetch_kw["channels"] = sidebar_channels
                 fetched_members = await asyncio.wait_for(
                     guild.fetch_members(**fetch_kw),
-                    timeout=90.0
+                    timeout=15.0
                 )
                 logger.info("fetch_members() done for '%s': %d online members.", guild.name, len(fetched_members))
             except Exception as fm_err:
@@ -1602,7 +1602,7 @@ class CommandCenterClient(discord.Client):
                     await rate_limiter.acquire()
                 try:
                     result = await asyncio.wait_for(
-                        guild.query_members(query=prefix, limit=100, cache=True),
+                        guild.query_members(query=prefix, limit=100, cache=False),
                         timeout=25.0
                     )
                     return result
@@ -1918,7 +1918,11 @@ class CommandCenterClient(discord.Client):
     async def handle_post_sync_all(self, request):
         """Trigger an immediate deep sync across all servers."""
         try:
-            self._syncing_members = False
+            if getattr(self, "_syncing_members", False):
+                return web.json_response({
+                    "success": True,
+                    "message": "Deep synchronization is already actively running in the background."
+                }, headers=CORS_HEADERS)
             asyncio.create_task(self._sync_guild_members_to_db())
             return web.json_response({"success": True, "message": "Deep 100% member synchronization started in the background."}, headers=CORS_HEADERS)
         except Exception as exc:

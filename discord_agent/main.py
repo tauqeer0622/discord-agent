@@ -1457,7 +1457,7 @@ class CommandCenterClient(discord.Client):
             except Exception:
                 pass
         if batch:
-            bulk_upsert_users(batch)
+            await asyncio.to_thread(bulk_upsert_users, batch)
 
     async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
         """
@@ -1659,9 +1659,9 @@ class CommandCenterClient(discord.Client):
                     await self._upsert_members_from_list(new_batch, guild, default_channel_str, role_map)
 
                 if total_queries % SAVE_EVERY == 0:
-                    save_scanned_prefixes(guild_id, visited, list(queue))
+                    await asyncio.to_thread(save_scanned_prefixes, guild_id, visited, list(queue))
                     total_found_so_far = len(seen_ids)
-                    save_sync_status(guild_id, guild.name, {
+                    await asyncio.to_thread(save_sync_status, guild_id, guild.name, {
                         "phase": "prefix_search",
                         "total_queries": total_queries,
                         "prefixes_visited": len(visited),
@@ -1680,10 +1680,10 @@ class CommandCenterClient(discord.Client):
                 if queue:
                     await asyncio.sleep(BATCH_PAUSE)
 
-            save_scanned_prefixes(guild_id, visited, [])
+            await asyncio.to_thread(save_scanned_prefixes, guild_id, visited, [])
 
             total_found = len(seen_ids)
-            save_sync_status(guild_id, guild.name, {
+            await asyncio.to_thread(save_sync_status, guild_id, guild.name, {
                 "phase": "complete",
                 "total_queries": total_queries,
                 "prefixes_visited": len(visited),
@@ -1734,7 +1734,7 @@ class CommandCenterClient(discord.Client):
                             "joined_at": author.joined_at.isoformat() if getattr(author, "joined_at", None) else None,
                         })
                     if channel_batch:
-                        bulk_upsert_users(channel_batch)
+                        await asyncio.to_thread(bulk_upsert_users, channel_batch)
                     await asyncio.sleep(0.3)
                 except Exception:
                     pass
@@ -1791,10 +1791,6 @@ class CommandCenterClient(discord.Client):
     async def handle_get_users(self, request):
         """Return paginated, deduplicated members from MongoDB with instant filtering."""
         try:
-            # Kick off background sync only when gateway is connected
-            if self.is_ready() and self.guilds:
-                asyncio.create_task(self._sync_guild_members_to_db())
-
             page = request.query.get("page", "1")
             limit = request.query.get("limit", "50")
             search = request.query.get("search")
@@ -1802,7 +1798,8 @@ class CommandCenterClient(discord.Client):
             user_type = request.query.get("type")
             presence = request.query.get("presence")
 
-            result = get_paginated_users(
+            result = await asyncio.to_thread(
+                get_paginated_users,
                 page=page,
                 limit=limit,
                 search=search,
@@ -1830,7 +1827,7 @@ class CommandCenterClient(discord.Client):
     async def handle_get_user_servers(self, request):
         """Return distinct server names where users exist."""
         try:
-            servers = get_all_user_servers()
+            servers = await asyncio.to_thread(get_all_user_servers)
             # Fallback to current guild names if database is empty
             if not servers:
                 servers = sorted([g.name for g in self.guilds if g.name])
@@ -1842,7 +1839,7 @@ class CommandCenterClient(discord.Client):
     async def handle_get_server_coverage(self, request):
         """Return official Discord member count vs MongoDB indexed count per server."""
         try:
-            db_counts = get_server_member_counts()
+            db_counts = await asyncio.to_thread(get_server_member_counts)
             persisted_guilds = get_official_guild_stats()
             
             guild_coverage = []

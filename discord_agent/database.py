@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import os
 import sqlite3
+import time
 from threading import Lock
 
 import certifi
@@ -651,6 +652,39 @@ def bulk_upsert_users(users_list):
     return total_upserted
 
 
+_user_stats_cache = {
+    "data": None,
+    "expires_at": 0.0,
+}
+
+
+def _get_cached_user_stats(collection, fallback_total):
+    now = time.time()
+    if _user_stats_cache["data"] is not None and now < _user_stats_cache["expires_at"]:
+        return _user_stats_cache["data"]
+
+    try:
+        total_all = collection.estimated_document_count()
+        humans_count = collection.count_documents({"is_bot": False})
+        bots_count = collection.count_documents({"is_bot": True})
+        online_count = collection.count_documents({"presence_status": {"$in": ["online", "idle", "dnd"]}})
+    except Exception:
+        total_all = fallback_total
+        humans_count = 0
+        bots_count = 0
+        online_count = 0
+
+    stats = {
+        "total": total_all,
+        "humans": humans_count,
+        "bots": bots_count,
+        "online": online_count,
+    }
+    _user_stats_cache["data"] = stats
+    _user_stats_cache["expires_at"] = now + 30.0
+    return stats
+
+
 def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=None, presence=None):
     """Retrieve paginated, deduplicated users directly from MongoDB with indexed filtering."""
     collection = get_collection("discord_users")
@@ -715,24 +749,7 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
 
     total_pages = max(1, (total_count + limit - 1) // limit)
 
-    # Calculate global counters
-    try:
-        total_all = collection.estimated_document_count()
-        humans_count = collection.count_documents({"is_bot": False})
-        bots_count = collection.count_documents({"is_bot": True})
-        online_count = collection.count_documents({"presence_status": {"$in": ["online", "idle", "dnd"]}})
-    except Exception:
-        total_all = total_count
-        humans_count = 0
-        bots_count = 0
-        online_count = 0
-
-    stats = {
-        "total": total_all,
-        "humans": humans_count,
-        "bots": bots_count,
-        "online": online_count,
-    }
+    stats = _get_cached_user_stats(collection, total_count)
 
     return {
         "users": users,

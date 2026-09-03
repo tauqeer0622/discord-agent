@@ -1532,58 +1532,66 @@ class CommandCenterClient(discord.Client):
                 logger.info("Upserted %d online members for '%s'.", len(seen_ids), guild.name)
 
             # ── STEP 4: Adaptive prefix tree with PERSISTENT PROGRESS ────────────────────
-            START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-")
+            START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-!$[~*+")
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
             SAVE_EVERY   = 15   # Save progress to MongoDB every N queries
             BATCH_SIZE   = 4    # Prefixes per gather batch
             BATCH_PAUSE  = 0.4  # Pause between query batches
 
+            # Check existing coverage in MongoDB
+            db_counts = get_server_member_counts()
+            current_indexed = db_counts.get(guild.name, 0)
+            coverage_pct = round((current_indexed / official_count) * 100, 1) if official_count else 100.0
+
             # Load previously scanned prefixes AND saved queue from MongoDB
             visited, saved_queue = get_scanned_prefixes(guild_id)
             resume_count = len(visited)
 
-            if resume_count and saved_queue:
-                # Perfect resume: both visited and queue saved by new code
-                queue = deque(saved_queue)
-                logger.info(
-                    "Resuming '%s': %d visited, %d pending in queue.",
-                    guild.name, resume_count, len(queue)
-                )
-            elif resume_count and not saved_queue:
-                # No queue saved — reconstruct or check for stale scan
-                reconstructed = []
-                for pfx in visited:
-                    if len(pfx) < MAX_DEPTH:
-                        children = [(pfx + c) for c in EXPAND_CHARS]
-                        visited_children = [c for c in children if c in visited]
-                        if visited_children:
-                            for c in children:
-                                if c not in visited:
-                                    reconstructed.append(c)
+            queued_set = set()
+            queue = deque()
 
-                if reconstructed:
-                    queue = deque(reconstructed)
-                    logger.info(
-                        "Recovered lost queue for '%s': %d unvisited sub-prefixes reconstructed.",
-                        guild.name, len(queue)
-                    )
-                elif all(len(p) == 1 for p in visited) and official_count > 2000:
-                    logger.info(
-                        "Stale scan detected for '%s' (%d official, %d 1-char prefixes, no queue). Resetting to fresh scan.",
-                        guild.name, official_count, len(visited)
-                    )
-                    visited = set()
-                    queue = deque(START_CHARS)
-                else:
-                    queue = deque()
-                    logger.info(
-                        "Prefix search already complete for '%s' (%d prefixes visited).",
-                        guild.name, resume_count
-                    )
-            else:
-                queue = deque(START_CHARS)
+            if resume_count and saved_queue:
+                for item in saved_queue:
+                    queue.append(item)
+                    queued_set.add(item)
+                # If coverage is still under 95% on a large server, ensure all 2-char combinations are queued
+                if official_count > 2000 and coverage_pct < 95.0:
+                    for c1 in START_CHARS:
+                        for c2 in EXPAND_CHARS:
+                            p2 = c1 + c2
+                            if p2 not in visited and p2 not in queued_set:
+                                queue.append(p2)
+                                queued_set.add(p2)
+                logger.info(
+                    "Resuming '%s': %d visited, %d pending in queue (current coverage: %.1f%%).",
+                    guild.name, resume_count, len(queue), coverage_pct
+                )
+            elif coverage_pct < 95.0 and official_count > 2000:
+                # Coverage is incomplete (<95%)! Queue all unvisited 1-char and 2-char prefixes
+                for c1 in START_CHARS:
+                    if c1 not in visited and c1 not in queued_set:
+                        queue.append(c1)
+                        queued_set.add(c1)
+                for c1 in START_CHARS:
+                    for c2 in EXPAND_CHARS:
+                        p2 = c1 + c2
+                        if p2 not in visited and p2 not in queued_set:
+                            queue.append(p2)
+                            queued_set.add(p2)
+                logger.info(
+                    "Guild '%s' incomplete (%.1f%% coverage, %d/%d). Queued %d unvisited prefixes to reach 100%%.",
+                    guild.name, coverage_pct, current_indexed, official_count, len(queue)
+                )
+            elif not visited:
+                for c1 in START_CHARS:
+                    queue.append(c1)
                 logger.info("Starting fresh prefix search for '%s'.", guild.name)
+            else:
+                logger.info(
+                    "Prefix search already complete for '%s' (%.1f%% coverage, %d visited).",
+                    guild.name, coverage_pct, resume_count
+                )
 
             offline_found = 0
             total_queries = 0
@@ -1595,7 +1603,7 @@ class CommandCenterClient(discord.Client):
                 try:
                     result = await asyncio.wait_for(
                         guild.query_members(query=prefix, limit=100, cache=True),
-                        timeout=8.0
+                        timeout=25.0
                     )
                     return result
                 except Exception:
@@ -1614,21 +1622,25 @@ class CommandCenterClient(discord.Client):
                 batch = []
                 while queue and len(batch) < BATCH_SIZE:
                     pfx = queue.popleft()
+                    queued_set.discard(pfx)
                     if pfx not in visited:
                         batch.append(pfx)
 
                 if not batch:
                     continue
 
-                for pfx in batch:
-                    visited.add(pfx)
-
                 results = await asyncio.gather(*[_do_query(p) for p in batch], return_exceptions=True)
 
                 new_batch = []
                 for pfx, matched in zip(batch, results):
                     if not isinstance(matched, list):
+                        # Query failed or timed out — do not mark visited, re-queue to try again
+                        if pfx not in queued_set and pfx not in visited:
+                            queue.append(pfx)
+                            queued_set.add(pfx)
                         continue
+
+                    visited.add(pfx)
 
                     for m in matched:
                         if m.id not in seen_ids:
@@ -1636,11 +1648,12 @@ class CommandCenterClient(discord.Client):
                             new_batch.append(m)
                             offline_found += 1
 
-                    if len(matched) >= 100 and len(pfx) < MAX_DEPTH:
+                    if len(matched) >= 95 and len(pfx) < MAX_DEPTH:
                         for c in EXPAND_CHARS:
                             sub = pfx + c
-                            if sub not in visited:
+                            if sub not in visited and sub not in queued_set:
                                 queue.append(sub)
+                                queued_set.add(sub)
 
                 if new_batch:
                     await self._upsert_members_from_list(new_batch, guild, default_channel_str, role_map)
@@ -1668,6 +1681,7 @@ class CommandCenterClient(discord.Client):
                     await asyncio.sleep(BATCH_PAUSE)
 
             save_scanned_prefixes(guild_id, visited, [])
+
             total_found = len(seen_ids)
             save_sync_status(guild_id, guild.name, {
                 "phase": "complete",

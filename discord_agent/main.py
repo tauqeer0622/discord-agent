@@ -396,6 +396,7 @@ class CommandCenterClient(discord.Client):
         self.discord_disconnect_seen_at = None
         self.discord_last_error = None
         self.discord_auth_probe = None
+        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=0.55, max_concurrent=2)
         mass_dm_manager.set_client(self)
 
     # ── Web Server ─────────────────────────────────────────────
@@ -1460,6 +1461,8 @@ class CommandCenterClient(discord.Client):
             await asyncio.to_thread(bulk_upsert_users, batch)
 
     async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
+        if rate_limiter is None:
+            rate_limiter = getattr(self, "gateway_rate_limiter", None)
         """
         Maximum member discovery with PERSISTENT PROGRESS and SAFE PACING.
 
@@ -1760,21 +1763,37 @@ class CommandCenterClient(discord.Client):
         self._syncing_members = True
         try:
             guild_list = list(self.guilds)
-            guild_list.sort(key=lambda g: getattr(g, "member_count", 0) or 0, reverse=True)
+            db_counts = await asyncio.to_thread(get_server_member_counts)
+
+            def _guild_sort_priority(g):
+                indexed = db_counts.get(g.name, 0)
+                official = getattr(g, "member_count", 0) or 1
+                cov = indexed / official
+                # Tier 0: Quick small servers (<10,000 members and <90% indexed) - finish in seconds!
+                if official < 10000 and cov < 0.90:
+                    return (0, official)
+                # Tier 1: Brand new / unindexed servers (<15% indexed) - start immediately!
+                if cov < 0.15:
+                    return (1, -official)
+                # Tier 2: Large incomplete servers (15% to 90% indexed)
+                if cov < 0.90:
+                    return (2, -official)
+                # Tier 3: Nearly complete or complete (>90% indexed)
+                return (3, -official)
+
+            guild_list.sort(key=_guild_sort_priority)
             logger.info(
                 "Starting paced member discovery across %d guilds (priority: %s)...",
                 len(guild_list),
-                [g.name for g in guild_list[:5]]
+                [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Global gateway rate limiter: max 2 in-flight, min 0.55s between queries
-            rate_limiter = GatewayRateLimiter(min_interval=0.55, max_concurrent=2)
-            # Process up to 2 guilds in parallel
-            guild_pool_sem = asyncio.Semaphore(2)
+            # Process up to 5 guilds concurrently (queries are safely serialized by GatewayRateLimiter)
+            guild_pool_sem = asyncio.Semaphore(5)
 
             async def _guild_worker(g):
                 async with guild_pool_sem:
-                    await self._sync_single_guild(g, rate_limiter)
+                    await self._sync_single_guild(g, self.gateway_rate_limiter)
 
             await asyncio.gather(
                 *[_guild_worker(g) for g in guild_list],

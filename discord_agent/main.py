@@ -2190,6 +2190,23 @@ class CommandCenterClient(discord.Client):
         # Immediately kick off a full member sync, then repeat every 10 minutes
         asyncio.create_task(self._member_sync_loop())
 
+    async def on_guild_join(self, guild: discord.Guild):
+        """Automatically called whenever the account joins a new server."""
+        logger.info(
+            "🎉 Joined new server: '%s' (ID: %s, Official Members: %s)",
+            guild.name,
+            guild.id,
+            getattr(guild, "member_count", "unknown")
+        )
+        try:
+            await guild.subscribe()
+            logger.info("Subscribed to gateway events for '%s'", guild.name)
+        except Exception as e:
+            logger.debug("Could not subscribe to '%s': %s", guild.name, e)
+
+        # Automatically start member discovery for this new server in background
+        asyncio.create_task(self._sync_single_guild(guild))
+
     async def on_message(self, message: discord.Message):
         await process_message(self, message)
 

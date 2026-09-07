@@ -1463,6 +1463,17 @@ class CommandCenterClient(discord.Client):
     async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
         if rate_limiter is None:
             rate_limiter = getattr(self, "gateway_rate_limiter", None)
+
+        active_set = getattr(self, "_active_sync_guilds", None)
+        if active_set is None:
+            self._active_sync_guilds = active_set = set()
+
+        guild_id = str(guild.id)
+        if guild_id in active_set:
+            logger.debug("Guild '%s' (%s) is already actively syncing. Skipping duplicate trigger.", guild.name, guild_id)
+            return
+
+        active_set.add(guild_id)
         """
         Maximum member discovery with PERSISTENT PROGRESS and SAFE PACING.
 
@@ -1481,7 +1492,6 @@ class CommandCenterClient(discord.Client):
         """
         from collections import deque
 
-        guild_id = str(guild.id)
         try:
             role_map = {role.id: role.name for role in guild.roles if role.name != "@everyone"}
             active_configs = [
@@ -1749,6 +1759,8 @@ class CommandCenterClient(discord.Client):
                 save_scanned_prefixes(guild_id, visited, list(_q))
             except Exception:
                 pass
+        finally:
+            active_set.discard(guild_id)
 
     async def _sync_guild_members_to_db(self):
         """
@@ -1788,8 +1800,8 @@ class CommandCenterClient(discord.Client):
                 [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Process up to 5 guilds concurrently (queries are safely serialized by GatewayRateLimiter)
-            guild_pool_sem = asyncio.Semaphore(5)
+            # Process up to 2 guilds concurrently (safe for Discord's gateway chunk buffer)
+            guild_pool_sem = asyncio.Semaphore(2)
 
             async def _guild_worker(g):
                 async with guild_pool_sem:
@@ -2217,14 +2229,17 @@ class CommandCenterClient(discord.Client):
             guild.id,
             getattr(guild, "member_count", "unknown")
         )
+        # Give Discord 5 seconds to finish initial guild handshake and channel caching
+        await asyncio.sleep(5.0)
         try:
             await guild.subscribe()
             logger.info("Subscribed to gateway events for '%s'", guild.name)
         except Exception as e:
             logger.debug("Could not subscribe to '%s': %s", guild.name, e)
 
-        # Automatically start member discovery for this new server in background
-        asyncio.create_task(self._sync_single_guild(guild))
+        # Trigger sync only if this guild is not already actively syncing
+        if str(guild.id) not in getattr(self, "_active_sync_guilds", set()):
+            asyncio.create_task(self._sync_single_guild(guild, self.gateway_rate_limiter))
 
     async def on_message(self, message: discord.Message):
         await process_message(self, message)

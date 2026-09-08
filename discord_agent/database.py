@@ -761,10 +761,19 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
     }
 
 
+_user_servers_cache = {"data": None, "expires_at": 0.0}
+
+
 def get_all_user_servers():
-    """Return distinct server names where indexed users exist."""
+    """Return distinct server names where indexed users exist (cached 30s)."""
+    now = time.time()
+    if _user_servers_cache["data"] is not None and now < _user_servers_cache["expires_at"]:
+        return _user_servers_cache["data"]
     collection = get_collection("discord_users")
-    return sorted([s for s in collection.distinct("servers") if s])
+    result = sorted([s for s in collection.distinct("servers") if s])
+    _user_servers_cache["data"] = result
+    _user_servers_cache["expires_at"] = now + 30.0
+    return result
 
 
 def get_campaign_target_users(server=None, user_type="human"):
@@ -824,8 +833,15 @@ def get_latest_campaign_record():
     return doc
 
 
+_server_counts_cache = {"data": None, "expires_at": 0.0}
+
+
 def get_server_member_counts():
-    """Aggregate member count per server in MongoDB."""
+    """Aggregate member count per server in MongoDB (cached 20s to absorb rapid API calls)."""
+    now = time.time()
+    if _server_counts_cache["data"] is not None and now < _server_counts_cache["expires_at"]:
+        return _server_counts_cache["data"]
+
     collection = get_collection("discord_users")
     pipeline = [
         {"$unwind": "$servers"},
@@ -840,6 +856,9 @@ def get_server_member_counts():
                 results[s_name] = doc.get("count", 0)
     except Exception:
         pass
+
+    _server_counts_cache["data"] = results
+    _server_counts_cache["expires_at"] = now + 20.0
     return results
 
 

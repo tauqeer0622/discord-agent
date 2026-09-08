@@ -361,7 +361,7 @@ class GatewayRateLimiter:
     (120 commands / 60 seconds max). Guarantees steady, non-bursting throughput
     without triggering socket throttling, 429s, or dropped responses.
     """
-    def __init__(self, min_interval: float = 0.55, max_concurrent: int = 2):
+    def __init__(self, min_interval: float = 0.50, max_concurrent: int = 3):
         self.min_interval = min_interval
         self.sem = asyncio.Semaphore(max_concurrent)
         self.lock = asyncio.Lock()
@@ -396,7 +396,7 @@ class CommandCenterClient(discord.Client):
         self.discord_disconnect_seen_at = None
         self.discord_last_error = None
         self.discord_auth_probe = None
-        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=0.55, max_concurrent=2)
+        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=0.50, max_concurrent=3)
         mass_dm_manager.set_client(self)
 
     # ── Web Server ─────────────────────────────────────────────
@@ -1549,8 +1549,8 @@ class CommandCenterClient(discord.Client):
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
             SAVE_EVERY   = 15   # Save progress to MongoDB every N queries
-            BATCH_SIZE   = 4    # Prefixes per gather batch
-            BATCH_PAUSE  = 0.4  # Pause between query batches
+            BATCH_SIZE   = 8    # Prefixes per gather batch (larger = less overhead)
+            BATCH_PAUSE  = 0.05 # Tiny yield to keep event loop alive; rate limiter paces the rest
 
             # Check existing coverage in MongoDB
             db_counts = get_server_member_counts()
@@ -1800,8 +1800,8 @@ class CommandCenterClient(discord.Client):
                 [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Process up to 2 guilds concurrently (safe for Discord's gateway chunk buffer)
-            guild_pool_sem = asyncio.Semaphore(2)
+            # Process up to 3 guilds concurrently (safe for Discord's gateway chunk buffer)
+            guild_pool_sem = asyncio.Semaphore(3)
 
             async def _guild_worker(g):
                 async with guild_pool_sem:
@@ -1819,15 +1819,28 @@ class CommandCenterClient(discord.Client):
 
 
 
+    # Short-lived dedup cache for /api/users — absorbs burst requests on hard-refresh.
+    # Key: (page, limit, search, server, user_type, presence) → (data_dict, expires_monotonic)
+    _users_cache: dict = {}
+    _USERS_CACHE_TTL: float = 4.0  # seconds
+
     async def handle_get_users(self, request):
         """Return paginated, deduplicated members from MongoDB with instant filtering."""
         try:
+            import time as _time
             page = request.query.get("page", "1")
             limit = request.query.get("limit", "50")
             search = request.query.get("search")
             server = request.query.get("server")
             user_type = request.query.get("type")
             presence = request.query.get("presence")
+
+            cache_key = (page, limit, search, server, user_type, presence)
+            cached = self._users_cache.get(cache_key)
+            if cached:
+                data, exp = cached
+                if _time.monotonic() < exp:
+                    return web.json_response(data, headers={**CORS_HEADERS, "X-Cache": "HIT"})
 
             result = await asyncio.to_thread(
                 get_paginated_users,
@@ -1838,6 +1851,12 @@ class CommandCenterClient(discord.Client):
                 user_type=user_type,
                 presence=presence,
             )
+
+            self._users_cache[cache_key] = (result, _time.monotonic() + self._USERS_CACHE_TTL)
+            # Evict stale entries to keep memory bounded
+            if len(self._users_cache) > 50:
+                now = _time.monotonic()
+                self._users_cache = {k: v for k, v in self._users_cache.items() if v[1] > now}
 
             return web.json_response(result, headers=CORS_HEADERS)
         except Exception as exc:

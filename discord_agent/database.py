@@ -49,69 +49,84 @@ def get_collection(name):
 
 
 def initialize_database():
+    from pymongo.errors import OperationFailure
     database = get_database()
     _client.admin.command("ping")
 
-    database.discord_channels.create_index(
-        [("channel_id", ASCENDING)],
-        unique=True,
-    )
-    database.discord_messages.create_index(
-        [("channel_id", ASCENDING), ("timestamp", DESCENDING)]
-    )
-    database.discord_messages.create_index(
-        [("timestamp", ASCENDING)]
-    )
-    database.channel_threads.create_index(
-        [("channel_id", ASCENDING)],
-        unique=True,
-    )
-    database.channel_threads.create_index(
-        [("thread_id", ASCENDING)],
-        unique=True,
-    )
-    database.channel_threads.create_index(
-        [("last_activity", ASCENDING)]
-    )
-    database.discord_users.create_index(
-        [("user_id", ASCENDING)],
-        unique=True,
-    )
-    database.discord_users.create_index(
-        [("username", ASCENDING)]
-    )
-    database.discord_users.create_index(
-        [("display_name", ASCENDING)]
-    )
-    database.discord_users.create_index(
-        [("servers", ASCENDING)]
-    )
-    database.discord_users.create_index(
-        [("last_seen_at", DESCENDING)]
-    )
-    database.discord_users.create_index(
-        [("is_bot", ASCENDING)]
-    )
-    database.discord_users.create_index(
-        [("presence_status", ASCENDING)]
-    )
+    # Indexes and seed writes — skip gracefully if Atlas storage quota is full (code 8000).
+    # The bot can still START and serve existing data read-only even when writes are blocked.
+    try:
+        database.discord_channels.create_index(
+            [("channel_id", ASCENDING)],
+            unique=True,
+        )
+        database.discord_messages.create_index(
+            [("channel_id", ASCENDING), ("timestamp", DESCENDING)]
+        )
+        database.discord_messages.create_index(
+            [("timestamp", ASCENDING)]
+        )
+        database.channel_threads.create_index(
+            [("channel_id", ASCENDING)],
+            unique=True,
+        )
+        database.channel_threads.create_index(
+            [("thread_id", ASCENDING)],
+            unique=True,
+        )
+        database.channel_threads.create_index(
+            [("last_activity", ASCENDING)]
+        )
+        database.discord_users.create_index(
+            [("user_id", ASCENDING)],
+            unique=True,
+        )
+        database.discord_users.create_index(
+            [("username", ASCENDING)]
+        )
+        database.discord_users.create_index(
+            [("display_name", ASCENDING)]
+        )
+        database.discord_users.create_index(
+            [("servers", ASCENDING)]
+        )
+        database.discord_users.create_index(
+            [("last_seen_at", DESCENDING)]
+        )
+        database.discord_users.create_index(
+            [("is_bot", ASCENDING)]
+        )
+        database.discord_users.create_index(
+            [("presence_status", ASCENDING)]
+        )
 
-    database.reply_rate_limit.update_one(
-        {"_id": "global"},
-        {
-            "$setOnInsert": {
-                "hour_start": "",
-                "day_start": "",
-                "hour_count": 0,
-                "day_count": 0,
-            }
-        },
-        upsert=True,
-    )
+        database.reply_rate_limit.update_one(
+            {"_id": "global"},
+            {
+                "$setOnInsert": {
+                    "hour_start": "",
+                    "day_start": "",
+                    "hour_count": 0,
+                    "day_count": 0,
+                }
+            },
+            upsert=True,
+        )
 
-    _migrate_legacy_sqlite(database)
-    delete_old_messages(MESSAGE_RETENTION_DAYS)
-    logger.info("MongoDB database '%s' is ready.", MONGODB_DB_NAME)
+        _migrate_legacy_sqlite(database)
+        delete_old_messages(MESSAGE_RETENTION_DAYS)
+        logger.info("MongoDB database '%s' is ready.", MONGODB_DB_NAME)
+
+    except OperationFailure as e:
+        if getattr(e, "code", None) == 8000:
+            logger.error(
+                "⚠️  MongoDB Atlas storage quota FULL (512 MB used). "
+                "Writes are blocked — bot will run in READ-ONLY mode. "
+                "Free up space or upgrade your Atlas cluster tier: "
+                "https://cloud.mongodb.com"
+            )
+        else:
+            raise
 
 
 def _table_exists(connection, table_name):

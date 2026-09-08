@@ -1800,9 +1800,10 @@ class CommandCenterClient(discord.Client):
                 [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Process up to 3 guilds concurrently (safe for Discord's gateway chunk buffer).
-            # Stagger starts by 3s each so fetch_members handshakes don't collide on the Gateway.
-            guild_pool_sem = asyncio.Semaphore(3)
+            # Process up to 2 guilds concurrently — 3 caused OOM on Render (each guild
+            # holds a large visited-prefix set + seen_ids dict in RAM simultaneously).
+            # Stagger starts by 3s so fetch_members handshakes don't collide on the Gateway.
+            guild_pool_sem = asyncio.Semaphore(2)
 
             async def _guild_worker(g, start_delay: float = 0.0):
                 if start_delay > 0:

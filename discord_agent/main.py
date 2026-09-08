@@ -1800,15 +1800,18 @@ class CommandCenterClient(discord.Client):
                 [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Process up to 3 guilds concurrently (safe for Discord's gateway chunk buffer)
+            # Process up to 3 guilds concurrently (safe for Discord's gateway chunk buffer).
+            # Stagger starts by 3s each so fetch_members handshakes don't collide on the Gateway.
             guild_pool_sem = asyncio.Semaphore(3)
 
-            async def _guild_worker(g):
+            async def _guild_worker(g, start_delay: float = 0.0):
+                if start_delay > 0:
+                    await asyncio.sleep(start_delay)
                 async with guild_pool_sem:
                     await self._sync_single_guild(g, self.gateway_rate_limiter)
 
             await asyncio.gather(
-                *[_guild_worker(g) for g in guild_list],
+                *[_guild_worker(g, start_delay=i * 3.0) for i, g in enumerate(guild_list)],
                 return_exceptions=True
             )
             logger.info("All guild syncs complete.")

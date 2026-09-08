@@ -96,9 +96,7 @@ def initialize_database():
         database.discord_users.create_index(
             [("is_bot", ASCENDING)]
         )
-        database.discord_users.create_index(
-            [("presence_status", ASCENDING)]
-        )
+        # presence_status index removed — field dropped to save storage
 
         database.reply_rate_limit.update_one(
             {"_id": "global"},
@@ -572,31 +570,24 @@ def release_reply_slot(slot):
 # ── Discord Users High-Scale Directory ─────────────────────────
 
 def upsert_user(user_data):
-    """Upsert a single Discord user into MongoDB ensuring zero duplicates."""
+    """Upsert a single Discord user into MongoDB ensuring zero duplicates.
+    Only stores fields essential for DM campaigns to keep document size minimal.
+    """
     if not user_data or not user_data.get("user_id"):
         return
     user_id = str(user_data["user_id"])
-    now_iso = datetime.now(timezone.utc).isoformat()
 
+    # Slim schema — only essential fields stored (saves ~315 bytes/doc vs old schema)
     set_fields = {
         "username": user_data.get("username", "Unknown"),
         "display_name": user_data.get("display_name") or user_data.get("username", "Unknown"),
-        "server_nickname": user_data.get("server_nickname") or user_data.get("display_name") or user_data.get("username", "—"),
         "is_bot": bool(user_data.get("is_bot", False)),
         "bot_status": "Bot" if user_data.get("is_bot") else "Human",
-        "presence_status": user_data.get("presence_status", "offline"),
-        "last_seen_at": user_data.get("last_seen_at") or now_iso,
     }
-    if user_data.get("avatar_url"):
-        set_fields["avatar_url"] = user_data["avatar_url"]
-    if user_data.get("joined_at"):
-        set_fields["joined_at"] = user_data["joined_at"]
 
     add_to_set = {}
     if user_data.get("server_name"):
         add_to_set["servers"] = user_data["server_name"]
-    if user_data.get("channel_name"):
-        add_to_set["channels"] = user_data["channel_name"]
     if user_data.get("assigned_roles"):
         roles = user_data["assigned_roles"]
         if isinstance(roles, list) and roles:
@@ -614,35 +605,29 @@ def upsert_user(user_data):
 
 
 def bulk_upsert_users(users_list):
-    """Bulk upsert thousands/millions of users into MongoDB with high throughput."""
+    """Bulk upsert thousands/millions of users into MongoDB with high throughput.
+    Slim schema — only essential DM fields stored to maximise cluster capacity.
+    """
     if not users_list:
         return 0
-    now_iso = datetime.now(timezone.utc).isoformat()
     operations = []
 
     for u in users_list:
         user_id = str(u.get("user_id", ""))
         if not user_id:
             continue
+        # Slim schema — dropped: avatar_url, channels, server_nickname,
+        # presence_status, last_seen_at, joined_at (~315 bytes saved/doc)
         set_fields = {
             "username": u.get("username", "Unknown"),
             "display_name": u.get("display_name") or u.get("username", "Unknown"),
-            "server_nickname": u.get("server_nickname") or u.get("display_name") or u.get("username", "—"),
             "is_bot": bool(u.get("is_bot", False)),
             "bot_status": "Bot" if u.get("is_bot") else "Human",
-            "presence_status": u.get("presence_status", "offline"),
-            "last_seen_at": u.get("last_seen_at") or now_iso,
         }
-        if u.get("avatar_url"):
-            set_fields["avatar_url"] = u["avatar_url"]
-        if u.get("joined_at"):
-            set_fields["joined_at"] = u["joined_at"]
 
         add_to_set = {}
         if u.get("server_name"):
             add_to_set["servers"] = u["server_name"]
-        if u.get("channel_name"):
-            add_to_set["channels"] = u["channel_name"]
         if u.get("assigned_roles"):
             roles = u["assigned_roles"]
             if isinstance(roles, list) and roles:
@@ -682,18 +667,16 @@ def _get_cached_user_stats(collection, fallback_total):
         total_all = collection.estimated_document_count()
         humans_count = collection.count_documents({"is_bot": False})
         bots_count = collection.count_documents({"is_bot": True})
-        online_count = collection.count_documents({"presence_status": {"$in": ["online", "idle", "dnd"]}})
     except Exception:
         total_all = fallback_total
         humans_count = 0
         bots_count = 0
-        online_count = 0
 
     stats = {
         "total": total_all,
         "humans": humans_count,
         "bots": bots_count,
-        "online": online_count,
+        "online": 0,  # presence_status field dropped to save storage
     }
     _user_stats_cache["data"] = stats
     _user_stats_cache["expires_at"] = now + 30.0
@@ -723,7 +706,7 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
         query["is_bot"] = True
 
     if presence and presence != "all":
-        query["presence_status"] = presence.lower()
+        pass  # presence_status field dropped — filter ignored
 
     if search:
         s_clean = search.strip()
@@ -731,14 +714,14 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
         query["$or"] = [
             {"username": regex_pattern},
             {"display_name": regex_pattern},
-            {"server_nickname": regex_pattern},
             {"user_id": regex_pattern},
             {"roles": regex_pattern},
             {"servers": regex_pattern},
         ]
 
     total_count = collection.count_documents(query)
-    cursor = collection.find(query).sort("last_seen_at", DESCENDING).skip(skip).limit(limit)
+    # Sort by _id descending (insertion order) — last_seen_at field dropped
+    cursor = collection.find(query).sort("_id", DESCENDING).skip(skip).limit(limit)
 
     users = []
     for doc in cursor:
@@ -751,13 +734,9 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
             doc["servers"] = [str(servers_list)] if servers_list else []
             doc["server_name"] = str(servers_list) if servers_list else "—"
 
-        channels_list = doc.get("channels", [])
-        if isinstance(channels_list, list):
-            doc["channels"] = [c for c in channels_list if c]
-            doc["channel_name"] = ", ".join(doc["channels"]) if doc["channels"] else "—"
-        else:
-            doc["channels"] = [str(channels_list)] if channels_list else []
-            doc["channel_name"] = str(channels_list) if channels_list else "—"
+        # channels field dropped — always return empty
+        doc["channels"] = []
+        doc["channel_name"] = "—"
 
         doc["assigned_roles"] = [r for r in doc.get("roles", []) if r and r != "@everyone"]
         users.append(doc)
@@ -774,6 +753,34 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
         "total_pages": total_pages,
         "stats": stats,
     }
+
+
+def migrate_slim_users():
+    """One-time migration: strip dropped fields from all existing user documents.
+    Frees ~200MB from the 596k existing documents in Atlas.
+    Safe to call multiple times — $unset is a no-op on missing fields.
+    """
+    try:
+        collection = get_collection("discord_users")
+        result = collection.update_many(
+            {},  # all documents
+            {"$unset": {
+                "avatar_url": "",
+                "channels": "",
+                "server_nickname": "",
+                "presence_status": "",
+                "last_seen_at": "",
+                "joined_at": "",
+            }}
+        )
+        logger.info(
+            "migrate_slim_users: stripped dropped fields from %d documents.",
+            result.modified_count,
+        )
+        return result.modified_count
+    except Exception as exc:
+        logger.warning("migrate_slim_users failed (writes may still be blocked): %s", exc)
+        return 0
 
 
 _user_servers_cache = {"data": None, "expires_at": 0.0}

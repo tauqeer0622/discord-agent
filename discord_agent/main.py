@@ -18,6 +18,7 @@ from database import (
     get_paginated_users,
     get_scanned_prefixes,
     get_server_member_counts,
+    migrate_slim_users,
     release_reply_slot,
     save_official_guild_stats,
     save_reply_for_message,
@@ -2244,6 +2245,10 @@ class CommandCenterClient(discord.Client):
         # Pre-warm the server member counts cache so the first dashboard visit has valid data.
         # Without this, the cold-start race (page loads before on_ready fires) returns 0/0 coverage.
         asyncio.create_task(asyncio.to_thread(get_server_member_counts))
+
+        # Run slim-schema migration in background — strips dropped fields from existing documents
+        # (~200MB freed from 596k docs). Safe to run every startup; $unset is no-op if field missing.
+        asyncio.create_task(asyncio.to_thread(migrate_slim_users))
 
         # Immediately kick off a full member sync, then repeat every 30 minutes
         asyncio.create_task(self._member_sync_loop())

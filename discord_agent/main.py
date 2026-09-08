@@ -2241,7 +2241,11 @@ class CommandCenterClient(discord.Client):
             except Exception as e:
                 logger.debug(f"Could not subscribe to guild '{guild.name}': {e}")
 
-        # Immediately kick off a full member sync, then repeat every 10 minutes
+        # Pre-warm the server member counts cache so the first dashboard visit has valid data.
+        # Without this, the cold-start race (page loads before on_ready fires) returns 0/0 coverage.
+        asyncio.create_task(asyncio.to_thread(get_server_member_counts))
+
+        # Immediately kick off a full member sync, then repeat every 30 minutes
         asyncio.create_task(self._member_sync_loop())
 
     async def on_guild_join(self, guild: discord.Guild):

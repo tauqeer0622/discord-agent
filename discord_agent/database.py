@@ -858,7 +858,8 @@ def get_server_member_counts():
         pass
 
     _server_counts_cache["data"] = results
-    _server_counts_cache["expires_at"] = now + 20.0
+    if results:  # Don't cache an empty result — retry on next call
+        _server_counts_cache["expires_at"] = now + 20.0
     return results
 
 

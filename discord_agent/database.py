@@ -48,10 +48,33 @@ def get_collection(name):
     return get_database()[name]
 
 
+def drop_redundant_indexes():
+    """Drop obsolete or wasteful indexes from discord_users to immediately free ~50-70 MB.
+    Safe to call even when cluster quota is exceeded (index drops reclaim disk space).
+    """
+    try:
+        col = get_collection("discord_users")
+        existing = col.index_information()
+        target_keys = {"last_seen_at", "username", "display_name", "presence_status"}
+        for name, info in list(existing.items()):
+            key_fields = {k[0] for k in info.get("key", [])}
+            if key_fields & target_keys:
+                try:
+                    col.drop_index(name)
+                    logger.info("Reclaimed storage: dropped obsolete index '%s'", name)
+                except Exception as e:
+                    logger.warning("Failed to drop index '%s': %s", name, e)
+    except Exception as exc:
+        logger.warning("drop_redundant_indexes check failed: %s", exc)
+
+
 def initialize_database():
     from pymongo.errors import OperationFailure
     database = get_database()
     _client.admin.command("ping")
+
+    # Reclaim storage first by dropping obsolete indexes
+    drop_redundant_indexes()
 
     # Indexes and seed writes — skip gracefully if Atlas storage quota is full (code 8000).
     # The bot can still START and serve existing data read-only even when writes are blocked.
@@ -82,21 +105,12 @@ def initialize_database():
             unique=True,
         )
         database.discord_users.create_index(
-            [("username", ASCENDING)]
-        )
-        database.discord_users.create_index(
-            [("display_name", ASCENDING)]
-        )
-        database.discord_users.create_index(
             [("servers", ASCENDING)]
-        )
-        database.discord_users.create_index(
-            [("last_seen_at", DESCENDING)]
         )
         database.discord_users.create_index(
             [("is_bot", ASCENDING)]
         )
-        # presence_status index removed — field dropped to save storage
+        # Dropped indexes: username, display_name, last_seen_at, presence_status (saved ~50-70 MB)
 
         database.reply_rate_limit.update_one(
             {"_id": "global"},
@@ -577,12 +591,11 @@ def upsert_user(user_data):
         return
     user_id = str(user_data["user_id"])
 
-    # Slim schema — only essential fields stored (saves ~315 bytes/doc vs old schema)
+    # Slim schema — only essential fields stored (saves ~330 bytes/doc vs old schema)
     set_fields = {
         "username": user_data.get("username", "Unknown"),
         "display_name": user_data.get("display_name") or user_data.get("username", "Unknown"),
         "is_bot": bool(user_data.get("is_bot", False)),
-        "bot_status": "Bot" if user_data.get("is_bot") else "Human",
     }
 
     add_to_set = {}
@@ -617,12 +630,11 @@ def bulk_upsert_users(users_list):
         if not user_id:
             continue
         # Slim schema — dropped: avatar_url, channels, server_nickname,
-        # presence_status, last_seen_at, joined_at (~315 bytes saved/doc)
+        # presence_status, last_seen_at, joined_at, bot_status (~330 bytes saved/doc)
         set_fields = {
             "username": u.get("username", "Unknown"),
             "display_name": u.get("display_name") or u.get("username", "Unknown"),
             "is_bot": bool(u.get("is_bot", False)),
-            "bot_status": "Bot" if u.get("is_bot") else "Human",
         }
 
         add_to_set = {}
@@ -757,9 +769,12 @@ def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=No
 
 def migrate_slim_users():
     """One-time migration: strip dropped fields from all existing user documents.
-    Frees ~200MB from the 596k existing documents in Atlas.
+    Frees ~220MB from the 596k existing documents in Atlas.
     Safe to call multiple times — $unset is a no-op on missing fields.
     """
+    # Drop redundant indexes to free index space immediately
+    drop_redundant_indexes()
+
     try:
         collection = get_collection("discord_users")
         result = collection.update_many(
@@ -771,6 +786,7 @@ def migrate_slim_users():
                 "presence_status": "",
                 "last_seen_at": "",
                 "joined_at": "",
+                "bot_status": "",
             }}
         )
         logger.info(
@@ -814,7 +830,6 @@ def get_campaign_target_users(server=None, user_type="human"):
         "user_id": 1,
         "username": 1,
         "display_name": 1,
-        "server_nickname": 1,
         "servers": 1,
         "server_name": 1,
         "is_bot": 1,

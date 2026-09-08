@@ -517,8 +517,8 @@
     .usr-btn-refresh{padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.82rem;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s}
     .usr-btn-refresh:hover{background:rgba(124,58,237,.18);border-color:rgba(124,58,237,.35);color:var(--purple-l)}
     
-    .usr-tbl-head{display:grid;grid-template-columns:190px 140px 160px 160px 1fr 110px 90px 100px;padding:.85rem 1.5rem;border-bottom:1px solid var(--border);font-size:.7rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;align-items:center;gap:10px}
-    .usr-tbl-row{display:grid;grid-template-columns:190px 140px 160px 160px 1fr 110px 90px 100px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
+    .usr-tbl-head{display:grid;grid-template-columns:190px 160px 1fr 90px 100px;padding:.85rem 1.5rem;border-bottom:1px solid var(--border);font-size:.7rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;align-items:center;gap:10px}
+    .usr-tbl-row{display:grid;grid-template-columns:190px 160px 1fr 90px 100px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
     .usr-tbl-row:last-child{border-bottom:none}
     .usr-tbl-row:hover{background:rgba(255,255,255,.025)}
 
@@ -888,11 +888,10 @@
 
     <!-- ── USERS TAB ─────────────────────────────────────────── -->
     <div id="tabPanelUsers" style="display:none">
-      <div class="stats">
+      <div class="stats" style="grid-template-columns:repeat(3,1fr)">
         <div class="stat c-all"><div class="stat-ico">👥</div><div class="stat-val" id="uStatTotal">0</div><div class="stat-lbl">Total Members</div></div>
         <div class="stat c-done"><div class="stat-ico">👤</div><div class="stat-val" id="uStatHumans">0</div><div class="stat-lbl">Human Users</div></div>
         <div class="stat c-biz"><div class="stat-ico">🤖</div><div class="stat-val" id="uStatBots">0</div><div class="stat-lbl">Bot Accounts</div></div>
-        <div class="stat c-urg"><div class="stat-ico">🟢</div><div class="stat-val" id="uStatOnline">0</div><div class="stat-lbl">Online Now</div></div>
       </div>
 
       <!-- Server Member Coverage & Accuracy Breakdown -->
@@ -926,7 +925,7 @@
         </div>
         <div style="padding:1.5rem">
           <div class="usr-controls">
-            <input type="text" class="usr-search" id="usrSearchInput" placeholder="Search by username, user ID, nickname, roles..." oninput="filterUsers()">
+            <input type="text" class="usr-search" id="usrSearchInput" placeholder="Search by username, user ID, roles, server..." oninput="filterUsers()">
             <select class="usr-select" id="usrFilterServer" onchange="filterUsers()">
               <option value="">All Servers</option>
             </select>
@@ -935,24 +934,14 @@
               <option value="human">👤 Humans Only</option>
               <option value="bot">🤖 Bots Only</option>
             </select>
-            <select class="usr-select" id="usrFilterPresence" onchange="filterUsers()">
-              <option value="all">All Statuses</option>
-              <option value="online">🟢 Online</option>
-              <option value="idle">🟡 Idle</option>
-              <option value="dnd">🔴 DND</option>
-              <option value="offline">⚪ Offline</option>
-            </select>
             <button class="usr-btn-refresh" type="button" onclick="loadUsers()">🔄 Refresh</button>
           </div>
 
           <div style="overflow-x:auto">
             <div class="usr-tbl-head">
               <div>Author / User</div>
-              <div>Server Nickname</div>
               <div>Server Name</div>
-              <div>Channel Name</div>
               <div>Assigned Roles</div>
-              <div>Online Status</div>
               <div>Bot Status</div>
               <div>Actions</div>
             </div>
@@ -2325,7 +2314,6 @@ async function loadUsers(){
   const q = ($('usrSearchInput')?.value || '').trim();
   const server = $('usrFilterServer')?.value || '';
   const type = $('usrFilterType')?.value || 'all';
-  const pres = $('usrFilterPresence')?.value || 'all';
 
   const params = new URLSearchParams({
     page: String(userPage),
@@ -2334,7 +2322,6 @@ async function loadUsers(){
   if(q) params.append('search', q);
   if(server) params.append('server', server);
   if(type !== 'all') params.append('type', type);
-  if(pres !== 'all') params.append('presence', pres);
 
   try{
     const res = await fetch(`/api/users?${params.toString()}`);
@@ -2520,7 +2507,6 @@ function renderUsers(data){
   if($('uStatTotal')) $('uStatTotal').textContent = Number(stats.total || total).toLocaleString();
   if($('uStatHumans')) $('uStatHumans').textContent = Number(stats.humans || 0).toLocaleString();
   if($('uStatBots')) $('uStatBots').textContent = Number(stats.bots || 0).toLocaleString();
-  if($('uStatOnline')) $('uStatOnline').textContent = Number(stats.online || 0).toLocaleString();
   if($('userPill')) $('userPill').textContent = `${Number(total).toLocaleString()} user${total===1?'':'s'}`;
 
   // Update Pagination Controls
@@ -2541,17 +2527,11 @@ function renderUsers(data){
   }
 
   body.innerHTML = users.map(u => {
-    const avatar = u.avatar_url 
-      ? `<img src="${esc(u.avatar_url)}" style="width:34px;height:34px;border-radius:10px;object-fit:cover;border:1px solid var(--border)" alt="">`
-      : `<div class="av" style="width:34px;height:34px;border-radius:10px;font-size:13px">${esc((u.display_name||u.username||'?')[0].toUpperCase())}</div>`;
+    const initials = `<div class="av" style="width:34px;height:34px;border-radius:10px;font-size:13px">${esc((u.display_name||u.username||'?')[0].toUpperCase())}</div>`;
 
     const rolesHtml = (u.assigned_roles && u.assigned_roles.length > 0)
       ? `<div class="role-list">${u.assigned_roles.map(r => `<span class="role-pill">${esc(r)}</span>`).join('')}</div>`
       : '<span style="color:var(--text3);font-size:.75rem">—</span>';
-
-    const pres = (u.presence_status || 'offline').toLowerCase();
-    const presClass = ['online','idle','dnd'].includes(pres) ? pres : 'offline';
-    const presLabel = pres === 'dnd' ? 'Do Not Disturb' : pres;
 
     const botBadge = u.is_bot 
       ? '<span class="b-biz" style="font-size:.68rem;padding:2px 7px">🤖 Bot</span>'
@@ -2561,24 +2541,15 @@ function renderUsers(data){
       ? u.servers 
       : (u.server_name && u.server_name !== '—' ? u.server_name.split(',').map(s=>s.trim()) : []);
 
-    const channelsList = Array.isArray(u.channels) && u.channels.length > 0 
-      ? u.channels 
-      : (u.channel_name && u.channel_name !== '—' ? u.channel_name.split(',').map(c=>c.trim()) : []);
-
     return `
       <div class="usr-tbl-row">
         <!-- Author / User -->
         <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
-          ${avatar}
+          ${initials}
           <div style="overflow:hidden">
             <div style="font-weight:700;font-size:.84rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(u.display_name||u.username)} (ID: ${esc(u.user_id)})">${esc(u.display_name||u.username)}</div>
             <div style="font-size:.7rem;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">@${esc(u.username)}</div>
           </div>
-        </div>
-
-        <!-- Server Nickname -->
-        <div style="font-size:.8rem;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(u.server_nickname||'—')}">
-          ${esc(u.server_nickname||'—')}
         </div>
 
         <!-- Server Name -->
@@ -2586,22 +2557,9 @@ function renderUsers(data){
           ${formatPillBadges(serversList, 'server')}
         </div>
 
-        <!-- Channel Name -->
-        <div style="overflow:hidden">
-          ${formatPillBadges(channelsList, 'channel')}
-        </div>
-
         <!-- Assigned Roles -->
         <div>
           ${rolesHtml}
-        </div>
-
-        <!-- Online Status -->
-        <div>
-          <span class="pres-badge ${presClass}">
-            <span class="pres-dot"></span>
-            ${esc(presLabel)}
-          </span>
         </div>
 
         <!-- Bot Status -->
@@ -2611,7 +2569,7 @@ function renderUsers(data){
 
         <!-- Action -->
         <div>
-          <button class="btn-dm-action" type="button" onclick="openQuickDm('${esc(u.user_id)}', '${esc(u.display_name||u.username)}', '${esc(u.avatar_url||'')}')">
+          <button class="btn-dm-action" type="button" onclick="openQuickDm('${esc(u.user_id)}', '${esc(u.display_name||u.username)}', '')">
             🔒 Send DM
           </button>
         </div>

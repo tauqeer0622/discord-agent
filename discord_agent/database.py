@@ -907,22 +907,25 @@ def save_official_guild_stats(guild_list):
     """Persist official Discord server metadata and official member counts in MongoDB."""
     if not guild_list:
         return
-    collection = get_collection("guild_official_stats")
-    for g in guild_list:
-        gid = str(g.get("guild_id") or "")
-        if not gid:
-            continue
-        collection.update_one(
-            {"guild_id": gid},
-            {"$set": {
-                "guild_id": gid,
-                "server_name": g.get("server_name"),
-                "official_count": g.get("official_count", 0),
-                "icon_url": g.get("icon_url"),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
-            upsert=True
-        )
+    try:
+        collection = get_collection("guild_official_stats")
+        for g in guild_list:
+            gid = str(g.get("guild_id") or "")
+            if not gid:
+                continue
+            collection.update_one(
+                {"guild_id": gid},
+                {"$set": {
+                    "guild_id": gid,
+                    "server_name": g.get("server_name"),
+                    "official_count": g.get("official_count", 0),
+                    "icon_url": g.get("icon_url"),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+                upsert=True
+            )
+    except Exception as exc:
+        logger.debug("save_official_guild_stats skipped (cluster writes may be blocked): %s", exc)
 
 
 def get_official_guild_stats():

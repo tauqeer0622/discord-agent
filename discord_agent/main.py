@@ -1930,7 +1930,10 @@ class CommandCenterClient(discord.Client):
                         "official_count": official,
                         "icon_url": icon_url,
                     })
-                save_official_guild_stats(guild_stats_to_save)
+                try:
+                    save_official_guild_stats(guild_stats_to_save)
+                except Exception as exc:
+                    logger.debug("Failed to persist guild stats: %s", exc)
             elif persisted_guilds:
                 # Use persisted official Discord stats if gateway is currently reconnecting
                 for s_name, p_stat in persisted_guilds.items():
@@ -1949,6 +1952,20 @@ class CommandCenterClient(discord.Client):
                         "indexed_count": indexed,
                         "coverage_percent": coverage_pct,
                         "icon_url": p_stat.get("icon_url"),
+                    })
+            elif db_counts:
+                # Fallback: Gateway is still connecting and no persisted stats yet,
+                # but we have indexed servers in MongoDB
+                for s_name, count in db_counts.items():
+                    total_official += count
+                    total_indexed += count
+                    guild_coverage.append({
+                        "guild_id": "",
+                        "server_name": s_name,
+                        "official_count": count,
+                        "indexed_count": count,
+                        "coverage_percent": 100.0,
+                        "icon_url": None,
                     })
 
             guild_coverage.sort(key=lambda x: x["official_count"], reverse=True)

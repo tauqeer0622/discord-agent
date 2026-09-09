@@ -49,13 +49,13 @@ def get_collection(name):
 
 
 def drop_redundant_indexes():
-    """Drop obsolete or wasteful indexes from discord_users to immediately free ~50-70 MB.
+    """Drop obsolete or wasteful indexes from discord_users to free storage.
     Safe to call even when cluster quota is exceeded (index drops reclaim disk space).
     """
     try:
         col = get_collection("discord_users")
         existing = col.index_information()
-        target_keys = {"last_seen_at", "username", "display_name", "presence_status"}
+        target_keys = {"last_seen_at", "display_name", "presence_status"}
         for name, info in list(existing.items()):
             key_fields = {k[0] for k in info.get("key", [])}
             if key_fields & target_keys:
@@ -105,12 +105,15 @@ def initialize_database():
             unique=True,
         )
         database.discord_users.create_index(
+            [("username", ASCENDING)]
+        )
+        database.discord_users.create_index(
             [("servers", ASCENDING)]
         )
         database.discord_users.create_index(
             [("is_bot", ASCENDING)]
         )
-        # Dropped indexes: username, display_name, last_seen_at, presence_status (saved ~50-70 MB)
+        # Dropped indexes: display_name, last_seen_at, presence_status
 
         database.reply_rate_limit.update_one(
             {"_id": "global"},

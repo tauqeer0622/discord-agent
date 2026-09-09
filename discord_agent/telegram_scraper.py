@@ -313,8 +313,19 @@ async def scrape_target(
     return users_scraped
 
 
+async def get_joined_groups_and_channels(client):
+    """Scan all groups and channels the logged-in Telegram account is currently in (just like self.guilds in Discord)."""
+    dialogs = []
+    logger.info("Scanning all groups & channels in your Telegram account...")
+    async for d in client.iter_dialogs():
+        if d.is_group or d.is_channel:
+            dialogs.append(d)
+    return dialogs
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Telegram Group & Channel Member Scraper")
+    parser.add_argument("--auto", "-a", action="store_true", help="Auto-scrape ALL groups and channels your account is in (No links needed, just like Discord)")
     parser.add_argument("--targets", "-t", type=str, help="Comma-separated Telegram channel/group usernames or invite links")
     parser.add_argument("--output", "-o", type=str, default="scraped_telegram_users.csv", help="CSV output filename (default: scraped_telegram_users.csv)")
     parser.add_argument("--limit", "-l", type=int, default=10000, help="Maximum members to scrape per target (default: 10000)")
@@ -329,21 +340,58 @@ async def main():
     logger.info("✅ Successfully authenticated with Telegram!")
 
     targets = []
+
+    # 1. If explicit targets given via CLI flag
     if args.targets:
         targets = [t.strip() for t in args.targets.split(",") if t.strip()]
+
+    # 2. If --auto flag passed, scrape all joined groups/channels automatically
+    elif args.auto:
+        dialogs = await get_joined_groups_and_channels(client)
+        targets = [d.entity for d in dialogs]
+        logger.info("Found %d joined groups/channels to scrape automatically!", len(targets))
+
+    # 3. Interactive prompt: choose between auto-scrape or entering links
     else:
-        raw_input = input("\nEnter Telegram channel/group links (separated by comma): ").strip()
-        targets = [t.strip() for t in raw_input.split(",") if t.strip()]
+        print("\n" + "=" * 60)
+        print("🎯 TELEGRAM MEMBER SCRAPER (CHOOSE MODE)")
+        print("=" * 60)
+        print("1. [Auto-Scrape ALL Joined Channels & Groups] (Just like Discord - NO links needed)")
+        print("2. [Enter Specific Channel/Group Links]")
+        print("=" * 60)
+        choice = input("Enter your choice (1 or 2, default: 1): ").strip()
+
+        if choice == "2":
+            raw_input = input("\nEnter Telegram channel/group links (separated by comma): ").strip()
+            targets = [t.strip() for t in raw_input.split(",") if t.strip()]
+        else:
+            dialogs = await get_joined_groups_and_channels(client)
+            if not dialogs:
+                logger.warning("No joined groups or channels found in this account.")
+                return
+            print(f"\n✅ Found {len(dialogs)} groups/channels in your Telegram account:")
+            for idx, d in enumerate(dialogs, 1):
+                chat_type = "Broadcast Channel" if getattr(d.entity, "broadcast", False) else "Group"
+                print(f"  {idx}. {d.title} ({chat_type})")
+            
+            sub_choice = input(f"\nScrape all {len(dialogs)} groups/channels? (Y/n): ").strip().lower()
+            if sub_choice == "n":
+                indexes = input("Enter comma-separated numbers to scrape (e.g. 1, 3, 5): ").strip()
+                chosen_idx = [int(i.strip()) - 1 for i in indexes.split(",") if i.strip().isdigit()]
+                targets = [dialogs[i].entity for i in chosen_idx if 0 <= i < len(dialogs)]
+            else:
+                targets = [d.entity for d in dialogs]
 
     if not targets:
-        logger.error("No targets provided. Exiting.")
+        logger.error("No targets selected. Exiting.")
         return
 
     total_scraped = 0
     for target in targets:
+        target_ref = target if isinstance(target, str) else getattr(target, "title", str(target))
         users = await scrape_target(
             client=client,
-            target_link=target,
+            target_link=target_ref if isinstance(target, str) else str(getattr(target, "id", target_ref)),
             output_csv=args.output,
             save_to_db=not args.no_db,
             max_members=args.limit,
@@ -356,3 +404,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

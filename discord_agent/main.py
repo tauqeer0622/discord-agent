@@ -42,6 +42,7 @@ from discord_permissions import (
     can_send_messages,
     is_locked_or_private_channel,
     is_restricted_text_channel,
+    is_admin_member,
 )
 from message_listener import process_message
 
@@ -1434,12 +1435,16 @@ class CommandCenterClient(discord.Client):
             )
 
     async def _upsert_members_from_list(self, members, guild, default_channel_str, role_map):
-        """Convert a list of discord.Member objects into DB records and upsert them."""
+        """Convert a list of discord.Member objects into DB records and upsert them.
+        Excludes administrators, moderators, and staff members from being indexed.
+        """
         if not members:
             return
         batch = []
         for member in members:
             try:
+                if is_admin_member(member, guild=guild, role_map=role_map):
+                    continue
                 display_name = getattr(member, "global_name", None) or member.display_name or member.name
                 roles = [role_map.get(r.id, r.name) for r in member.roles if r.name != "@everyone"]
                 avatar_url = str(member.avatar.url) if member.avatar else None
@@ -1726,6 +1731,8 @@ class CommandCenterClient(discord.Client):
                     async for msg in ch.history(limit=100):
                         author = msg.author
                         if not author:
+                            continue
+                        if is_admin_member(author, guild=guild, channel=ch, role_map=role_map):
                             continue
                         author_name = getattr(author, "name", "Unknown")
                         display_name = getattr(author, "global_name", None) or getattr(author, "display_name", None) or author_name

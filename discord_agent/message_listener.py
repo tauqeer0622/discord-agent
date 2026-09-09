@@ -15,7 +15,7 @@ from database import (
     save_message,
     upsert_user,
 )
-from discord_permissions import is_restricted_text_channel
+from discord_permissions import is_restricted_text_channel, is_admin_member
 from priority_engine import is_target_question
 from state_manager import state
 from thread_manager import append_to_control_thread, create_control_thread
@@ -162,21 +162,22 @@ async def process_message(client: discord.Client, message: discord.Message):
     if message.author.id == client.user.id or message.guild is None:
         return
 
-    # Passively index message author into MongoDB users directory
+    # Passively index message author into MongoDB users directory (skip admins/mods)
     try:
         author = message.author
-        roles = [r.name for r in getattr(author, "roles", []) if r.name != "@everyone"]
-        upsert_user({
-            "user_id": str(author.id),
-            "username": author.name,
-            "display_name": getattr(author, "global_name", None) or author.display_name or author.name,
-            "server_nickname": getattr(author, "nick", None) or author.display_name or author.name,
-            "server_name": message.guild.name if message.guild else None,
-            "channel_name": f"#{message.channel.name}" if hasattr(message.channel, "name") else None,
-            "assigned_roles": roles,
-            "is_bot": bool(author.bot),
-            "avatar_url": str(author.avatar.url) if author.avatar else None,
-        })
+        if not is_admin_member(author, guild=message.guild, channel=message.channel):
+            roles = [r.name for r in getattr(author, "roles", []) if r.name != "@everyone"]
+            upsert_user({
+                "user_id": str(author.id),
+                "username": author.name,
+                "display_name": getattr(author, "global_name", None) or author.display_name or author.name,
+                "server_nickname": getattr(author, "nick", None) or author.display_name or author.name,
+                "server_name": message.guild.name if message.guild else None,
+                "channel_name": f"#{message.channel.name}" if hasattr(message.channel, "name") else None,
+                "assigned_roles": roles,
+                "is_bot": bool(author.bot),
+                "avatar_url": str(author.avatar.url) if author.avatar else None,
+            })
     except Exception as exc:
         logger.debug("Failed to passively index user: %s", exc)
 

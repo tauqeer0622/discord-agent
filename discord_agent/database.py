@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import re
 import sqlite3
 import time
 from threading import Lock
@@ -24,6 +25,11 @@ MESSAGE_RETENTION_DAYS = 7
 _client = None
 _database = None
 _reply_limit_lock = Lock()
+
+ADMIN_ROLE_REGEX = re.compile(
+    r"\b(admin|administrator|mod|moderator|owner|co-owner|founder|co-founder|staff|lead|core\s*team|community\s*manager|management|manager|officer|head|support)\b",
+    re.IGNORECASE,
+)
 
 
 def get_database():
@@ -592,6 +598,11 @@ def upsert_user(user_data):
     """
     if not user_data or not user_data.get("user_id"):
         return
+    if user_data.get("is_admin"):
+        return
+    assigned_roles = user_data.get("assigned_roles") or []
+    if any(isinstance(r, str) and ADMIN_ROLE_REGEX.search(r) for r in assigned_roles):
+        return
     user_id = str(user_data["user_id"])
 
     # Slim schema — only essential fields stored (saves ~330 bytes/doc vs old schema)
@@ -631,6 +642,11 @@ def bulk_upsert_users(users_list):
     for u in users_list:
         user_id = str(u.get("user_id", ""))
         if not user_id:
+            continue
+        if u.get("is_admin"):
+            continue
+        assigned_roles = u.get("assigned_roles") or []
+        if any(isinstance(r, str) and ADMIN_ROLE_REGEX.search(r) for r in assigned_roles):
             continue
         # Slim schema — dropped: avatar_url, channels, server_nickname,
         # presence_status, last_seen_at, joined_at, bot_status (~330 bytes saved/doc)
@@ -828,6 +844,9 @@ def get_campaign_target_users(server=None, user_type="human"):
     elif user_type == "bot":
         query["is_bot"] = True
 
+    # Exclude any user with admin/moderator roles from DM campaigns
+    query["roles"] = {"$not": {"$regex": r"\b(admin|administrator|mod|moderator|owner|founder|staff|lead)\b", "$options": "i"}}
+
     cursor = collection.find(query, {
         "_id": 0,
         "user_id": 1,
@@ -851,6 +870,9 @@ def get_campaign_target_count(server=None, user_type="human"):
         query["is_bot"] = False
     elif user_type == "bot":
         query["is_bot"] = True
+
+    # Exclude any user with admin/moderator roles from DM campaigns
+    query["roles"] = {"$not": {"$regex": r"\b(admin|administrator|mod|moderator|owner|founder|staff|lead)\b", "$options": "i"}}
 
     return collection.count_documents(query)
 

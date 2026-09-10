@@ -44,16 +44,66 @@ ADMIN_TITLE_REGEX = re.compile(
     re.IGNORECASE,
 )
 
-# MongoDB setup (optional)
-_mongo_col = None
-try:
-    from database import get_database
-    db = get_database()
-    _mongo_col = db["telegram_users"]
-    # Ensure unique index on user_id
-    _mongo_col.create_index([("user_id", 1)], unique=True)
-except Exception:
-    logger.debug("MongoDB not connected; results will be saved to CSV only.")
+# Local Storage Setup (SQLite on local hard drive - NO cloud quota limits)
+LOCAL_DB_FILE = "telegram_local_storage.db"
+
+
+def init_local_sqlite(db_file=LOCAL_DB_FILE):
+    """Create local SQLite table with deduplication on user_id."""
+    import sqlite3
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            phone TEXT,
+            source_channel TEXT,
+            scraped_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def save_users_to_local_sqlite(users_list, db_file=LOCAL_DB_FILE):
+    """Save/update users in local SQLite database with zero duplicates."""
+    if not users_list:
+        return 0
+    import sqlite3
+    init_local_sqlite(db_file)
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    upsert_sql = """
+        INSERT INTO telegram_users (user_id, username, first_name, last_name, phone, source_channel, scraped_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username=excluded.username,
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            phone=excluded.phone,
+            source_channel=excluded.source_channel,
+            scraped_at=excluded.scraped_at
+    """
+    rows = [
+        (
+            u["user_id"],
+            u.get("username", ""),
+            u.get("first_name", ""),
+            u.get("last_name", ""),
+            u.get("phone", ""),
+            u.get("source_channel", ""),
+            u.get("scraped_at", ""),
+        )
+        for u in users_list
+    ]
+    cursor.executemany(upsert_sql, rows)
+    conn.commit()
+    total_saved = cursor.rowcount
+    conn.close()
+    return total_saved
 
 
 def get_telegram_client(session_name="tg_scraper_session"):
@@ -275,7 +325,7 @@ async def scrape_target(
         return []
 
     # ─────────────────────────────────────────────────────────────
-    # SAVE TO CSV
+    # 1. LOCAL STORAGE: SAVE TO CSV (Excel readable)
     # ─────────────────────────────────────────────────────────────
     file_exists = os.path.isfile(output_csv)
     with open(output_csv, mode="a" if file_exists else "w", newline="", encoding="utf-8") as f:
@@ -284,31 +334,16 @@ async def scrape_target(
             writer.writeheader()
         for u in users_scraped:
             writer.writerow(u)
-    logger.info("💾 Saved %d users to CSV: %s", len(users_scraped), output_csv)
+    logger.info("💾 Saved %d users to Local CSV: %s", len(users_scraped), output_csv)
 
     # ─────────────────────────────────────────────────────────────
-    # SAVE TO MONGODB (telegram_users collection)
+    # 2. LOCAL STORAGE: SAVE TO LOCAL SQLITE (Unlimited space, deduplicated)
     # ─────────────────────────────────────────────────────────────
-    if save_to_db and _mongo_col is not None:
-        from pymongo import UpdateOne
-        operations = []
-        for u in users_scraped:
-            doc = {
-                "username": u["username"],
-                "first_name": u["first_name"],
-                "last_name": u["last_name"],
-                "phone": u["phone"],
-                "source_channel": u["source_channel"],
-                "scraped_at": u["scraped_at"],
-            }
-            operations.append(UpdateOne({"user_id": u["user_id"]}, {"$set": doc}, upsert=True))
-
-        try:
-            result = _mongo_col.bulk_write(operations, ordered=False)
-            logger.info("💾 Saved %d users to MongoDB 'telegram_users' collection (upserted: %d, modified: %d)",
-                        len(users_scraped), result.upserted_count, result.modified_count)
-        except Exception as exc:
-            logger.warning("Could not persist to MongoDB (cluster may be full): %s", exc)
+    try:
+        saved_sqlite = save_users_to_local_sqlite(users_scraped)
+        logger.info("💾 Saved %d users to Local SQLite database '%s' (0 bytes of MongoDB used)", len(users_scraped), LOCAL_DB_FILE)
+    except Exception as exc:
+        logger.warning("Local SQLite save error: %s", exc)
 
     return users_scraped
 
@@ -345,18 +380,29 @@ async def main():
     if args.targets:
         targets = [t.strip() for t in args.targets.split(",") if t.strip()]
 
-    # 2. If --auto flag passed, scrape all joined groups/channels automatically
+    # 2. If targets.txt file exists in directory
+    elif os.path.isfile("targets.txt") and os.path.getsize("targets.txt") > 0:
+        with open("targets.txt", "r", encoding="utf-8") as f:
+            targets = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+        if targets:
+            logger.info("📄 Loaded %d targets from targets.txt", len(targets))
+
+    # 3. If TELEGRAM_TARGETS set in .env
+    elif os.getenv("TELEGRAM_TARGETS"):
+        targets = [t.strip() for t in os.getenv("TELEGRAM_TARGETS").split(",") if t.strip()]
+
+    # 4. If --auto flag passed, scrape all joined groups/channels automatically
     elif args.auto:
         dialogs = await get_joined_groups_and_channels(client)
         targets = [d.entity for d in dialogs]
         logger.info("Found %d joined groups/channels to scrape automatically!", len(targets))
 
-    # 3. Interactive prompt: choose between auto-scrape or entering links
+    # 5. Interactive prompt: choose between auto-scrape or entering links
     else:
         print("\n" + "=" * 60)
         print("🎯 TELEGRAM MEMBER SCRAPER (CHOOSE MODE)")
         print("=" * 60)
-        print("1. [Auto-Scrape ALL Joined Channels & Groups] (Just like Discord - NO links needed)")
+        print("1. [Auto-Scrape ALL Joined Channels & Groups] (NO links needed)")
         print("2. [Enter Specific Channel/Group Links]")
         print("=" * 60)
         choice = input("Enter your choice (1 or 2, default: 1): ").strip()

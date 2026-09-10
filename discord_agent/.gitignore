@@ -8,3 +8,7 @@ __pycache__/
 
 *.log
 discord_agent.db
+*.db
+*.session
+*.session-journal
+scraped_telegram_users.csv

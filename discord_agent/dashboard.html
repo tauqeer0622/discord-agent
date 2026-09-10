@@ -620,12 +620,23 @@
     .auth-input:focus{border-color:var(--purple-l);box-shadow:0 0 0 3px rgba(124,58,237,.2)}
     .auth-eye{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px}
     .auth-btn{width:100%;padding:14px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--purple),#6366f1);color:#fff;font-size:.95rem;font-weight:800;cursor:pointer;transition:opacity .15s;box-shadow:0 8px 24px rgba(124,58,237,.35)}
-    .auth-btn:hover{opacity:.9}
-    .auth-btn:disabled{opacity:.4;cursor:not-allowed}
+    /* ── Telegram Leads Tab ────────────────────────────────────── */
+    .tg-tbl-head{display:grid;grid-template-columns:220px 170px 1fr 140px 110px;padding:.85rem 1.5rem;border-bottom:1px solid var(--border);font-size:.7rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;align-items:center;gap:10px}
+    .tg-tbl-row{display:grid;grid-template-columns:220px 170px 1fr 140px 110px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
+    .tg-tbl-row:last-child{border-bottom:none}
+    .tg-tbl-row:hover{background:rgba(56,189,248,.035)}
+    .tg-channel-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:100px;font-size:.75rem;font-weight:600;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
+    .tg-channel-pill:hover{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.3);color:#38bdf8}
+    .tg-channel-pill.active{background:linear-gradient(135deg,#0284c7,#0369a1);border-color:rgba(56,189,248,.4);color:#fff;box-shadow:0 0 12px rgba(56,189,248,.3)}
+    .tg-handle-badge{display:inline-flex;align-items:center;gap:4px;font-family:monospace;font-size:.78rem;font-weight:700;color:#38bdf8;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.24);padding:3px 8px;border-radius:6px;text-decoration:none;transition:all .15s}
+    .tg-handle-badge:hover{background:rgba(56,189,248,.22);border-color:rgba(56,189,248,.4);box-shadow:0 0 8px rgba(56,189,248,.3)}
+    .tg-handle-none{display:inline-flex;align-items:center;font-size:.72rem;color:var(--text3);background:rgba(255,255,255,.03);border:1px solid var(--border);padding:2px 7px;border-radius:6px}
+    .tg-src-badge{font-size:.72rem;font-weight:600;padding:3px 9px;border-radius:6px;background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.25);color:var(--purple-l);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;display:inline-block;transition:all .15s}
+    .tg-src-badge:hover{background:rgba(124,58,237,.2);border-color:var(--purple-l)}
 
     /* ── Responsive ──────────────────────────────────────────────── */
     @media(max-width:1100px){.grid,.cfg-grid,.cmp-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
-    @media(max-width:768px){.stats,.cfg-stats{grid-template-columns:repeat(2,1fr)}.user-cards{grid-template-columns:1fr}#header{padding:0 1rem}#main{padding:1rem 1rem 3rem}.tbl-head,.tbl-row{grid-template-columns:120px 1fr 100px}}
+    @media(max-width:768px){.stats,.cfg-stats{grid-template-columns:repeat(2,1fr)}.user-cards{grid-template-columns:1fr}#header{padding:0 1rem}#main{padding:1rem 1rem 3rem}.tbl-head,.tbl-row,.tg-tbl-head,.tg-tbl-row{grid-template-columns:120px 1fr 100px}}
   </style>
 </head>
 <body>
@@ -734,7 +745,8 @@
     <div class="tab-bar">
       <div class="tab on" id="tabOverview"        onclick="setTab('overview')">📊 Overview</div>
       <div class="tab"    id="tabConfigurations"  onclick="setTab('configurations')">⚙️ Configurations</div>
-      <div class="tab"    id="tabUsers"           onclick="setTab('users')">👥 Users</div>
+      <div class="tab"    id="tabUsers"           onclick="setTab('users')">👥 Discord Users</div>
+      <div class="tab"    id="tabTelegram"        onclick="setTab('telegram')">✈️ Telegram Leads <span class="pill" id="tgTabPill" style="margin-left:5px;background:rgba(56,189,248,.18);color:#38bdf8;border-color:rgba(56,189,248,.35);padding:1px 7px;font-size:11px">33.1k</span></div>
       <div class="tab"    id="tabCampaign"        onclick="setTab('campaign')">📢 Mass DM Broadcast</div>
     </div>
 
@@ -1126,6 +1138,118 @@
           </div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- ── TELEGRAM SCRAPED AUDIENCE TAB ───────────────────────── -->
+    <div id="tabPanelTelegram" style="display:none">
+      <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+        <div class="stat c-all">
+          <div class="stat-ico">✈️</div>
+          <div class="stat-val" id="tgStatTotal" style="color:#38bdf8">33,076</div>
+          <div class="stat-lbl">Total Scraped Leads</div>
+        </div>
+        <div class="stat c-done">
+          <div class="stat-ico">🏷️</div>
+          <div class="stat-val" id="tgStatWithUsername" style="color:var(--green-l)">24,993</div>
+          <div class="stat-lbl">Members With @Username</div>
+        </div>
+        <div class="stat c-biz">
+          <div class="stat-ico">📢</div>
+          <div class="stat-val" id="tgStatChannels" style="color:var(--amber-l)">36</div>
+          <div class="stat-lbl">Target Communities</div>
+        </div>
+        <div class="stat" style="border-color:rgba(56,189,248,.25);background:rgba(56,189,248,.03)">
+          <div class="stat-ico">💾</div>
+          <div class="stat-val" id="tgStatStorage" style="font-size:1.35rem;font-weight:800;color:var(--text);margin-top:4px">4.8 MB SQLite</div>
+          <div class="stat-lbl" id="tgStatStorageSub" style="color:var(--green-l);font-weight:700">0 bytes MongoDB used</div>
+        </div>
+      </div>
+
+      <!-- Communities Yield Breakdown -->
+      <div class="card wide-card" style="margin-bottom:1.5rem">
+        <div class="card-head">
+          <div>
+            <span class="card-title">📢 Target Communities & Extraction Yield</span>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Click any community tag to instantly filter members from that group/channel</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button type="button" class="btn-secondary" onclick="clearTgChannelFilter()" style="padding:5px 12px;font-size:.74rem">
+              Show All Channels
+            </button>
+            <span class="pill" id="tgChannelCountPill" style="background:rgba(56,189,248,.12);color:#38bdf8;border-color:rgba(56,189,248,.3)">36 Groups / Channels</span>
+          </div>
+        </div>
+        <div style="padding:1.1rem 1.4rem">
+          <div id="tgChannelPills" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;padding-right:4px">
+            <div style="font-size:.8rem;color:var(--text3)">Loading target channels…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Telegram Members Table -->
+      <div class="card wide-card">
+        <div class="card-head">
+          <div>
+            <span class="card-title">✈️ Telegram Audience Directory</span>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">All administrators, staff, and bots were excluded during extraction</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <a href="/api/telegram/export" download class="btn-primary" style="background:linear-gradient(135deg,#0284c7,#0369a1);border:1px solid rgba(56,189,248,.4);padding:7px 15px;font-size:.76rem;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:6px;box-shadow:0 0 16px rgba(2,132,199,.3)">
+              ⬇️ Export Full CSV (33k+)
+            </a>
+            <span class="pill" id="tgPill" style="background:rgba(56,189,248,.15);color:#38bdf8;border-color:rgba(56,189,248,.35)">0 leads</span>
+          </div>
+        </div>
+        <div style="padding:1.5rem">
+          <div class="usr-controls">
+            <input type="text" class="usr-search" id="tgSearchInput" placeholder="Search by handle (@...), member name, user ID, or channel..." oninput="filterTelegramUsers()">
+            <select class="usr-select" id="tgFilterChannel" onchange="onTgChannelSelectChange()">
+              <option value="">All Target Communities</option>
+            </select>
+            <select class="usr-select" id="tgFilterUsername" onchange="filterTelegramUsers()">
+              <option value="all">All Members</option>
+              <option value="yes">🏷️ Only With @Username</option>
+              <option value="no">🚫 No Username</option>
+            </select>
+            <button class="usr-btn-refresh" type="button" onclick="loadTelegramUsers()">🔄 Refresh</button>
+          </div>
+
+          <div style="overflow-x:auto">
+            <div class="tg-tbl-head">
+              <div>Member / User ID</div>
+              <div>Telegram Handle</div>
+              <div>Source Community</div>
+              <div>Extracted At</div>
+              <div>Quick Action</div>
+            </div>
+            <div id="telegramTableBody">
+              <div class="empty"><div class="empty-ico">✈️</div><div class="empty-txt">Loading Telegram members…</div></div>
+            </div>
+          </div>
+
+          <!-- Pagination Toolbar -->
+          <div class="usr-pagination-bar" style="display:flex;justify-content:space-between;align-items:center;margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);flex-wrap:wrap;gap:1rem">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:.8rem;color:var(--text3)" id="tgPaginationSummary">Showing 0-0 of 0 leads</span>
+              <select class="usr-select" id="tgPageLimit" onchange="changeTgPageLimit()" style="padding:5px 10px;font-size:.78rem">
+                <option value="25">25 per page</option>
+                <option value="50" selected>50 per page</option>
+                <option value="100">100 per page</option>
+                <option value="200">200 per page</option>
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button class="usr-page-btn" id="btnTgFirst" type="button" onclick="goToTgPage(1)" title="First Page">«</button>
+              <button class="usr-page-btn" id="btnTgPrev" type="button" onclick="goToTgPage(tgPage - 1)">‹ Prev</button>
+              <div style="font-size:.8rem;font-weight:700;color:var(--text);padding:0 8px">
+                Page <span id="tgCurrentPage" style="color:#38bdf8">1</span> of <span id="tgTotalPages">1</span>
+              </div>
+              <button class="usr-page-btn" id="btnTgNext" type="button" onclick="goToTgPage(tgPage + 1)">Next ›</button>
+              <button class="usr-page-btn" id="btnTgLast" type="button" onclick="goToTgPage(tgTotalPages)" title="Last Page">»</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1521,13 +1645,16 @@ function setTab(t){
   $('tabOverview').classList.toggle('on', t==='overview');
   $('tabConfigurations').classList.toggle('on', t==='configurations');
   $('tabUsers').classList.toggle('on', t==='users');
+  $('tabTelegram').classList.toggle('on', t==='telegram');
   $('tabCampaign').classList.toggle('on', t==='campaign');
   $('tabPanelOverview').style.display        = t==='overview'       ? '' : 'none';
   $('tabPanelConfigurations').style.display  = t==='configurations' ? '' : 'none';
   $('tabPanelUsers').style.display           = t==='users'          ? '' : 'none';
+  $('tabPanelTelegram').style.display        = t==='telegram'       ? '' : 'none';
   $('tabPanelCampaign').style.display        = t==='campaign'       ? '' : 'none';
   if(t==='configurations') loadGuilds();
   if(t==='users') { loadGuilds(); loadUsers(); loadServerCoverage(); }
+  if(t==='telegram') { loadTelegramStats(); loadTelegramChannels(); loadTelegramUsers(); }
   if(t==='campaign') { loadCampaignServers(); updateCampaignAudienceCount(); pollCampaignStatus(); }
 }
 
@@ -2293,6 +2420,7 @@ async function refresh(){
     renderMemory(memory);
     renderConfigTab(configs);
     renderUser(cache);
+    syncTelegramBadge();
 
     dot.classList.remove('spin');
     $('syncTxt').textContent=`Updated ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;
@@ -2885,6 +3013,287 @@ async function controlCampaign(action){
   }catch(err){
     console.error('Failed to control campaign:', err);
   }
+}
+
+/* ── Telegram Audience Directory & Stats (Local SQLite) ─────── */
+let tgPage = 1;
+let tgLimit = 50;
+let tgTotalPages = 1;
+let tgActiveChannel = '';
+let tgActiveUsername = 'all';
+let tgSearchDebounceTimer = null;
+
+async function syncTelegramBadge(){
+  try{
+    const res = await fetch('/api/telegram/stats');
+    if(res.ok){
+      const data = await res.json();
+      const total = Number(data.total_users || 0);
+      const pill = $('tgTabPill');
+      if(pill && total > 0){
+        pill.textContent = total > 1000 ? `${(total/1000).toFixed(1)}k` : String(total);
+      }
+    }
+  }catch(e){
+    console.debug('Failed to sync Telegram badge:', e);
+  }
+}
+
+async function loadTelegramStats(){
+  try{
+    const res = await fetch('/api/telegram/stats');
+    if(!res.ok) return;
+    const data = await res.json();
+    const total = Number(data.total_users || 0);
+    const withUsername = Number(data.with_username || 0);
+    const channels = Number(data.total_channels || 0);
+    const dbMb = data.db_size_mb || 0;
+
+    if($('tgStatTotal')) $('tgStatTotal').textContent = total.toLocaleString();
+    if($('tgStatWithUsername')) $('tgStatWithUsername').textContent = withUsername.toLocaleString();
+    if($('tgStatChannels')) $('tgStatChannels').textContent = channels.toLocaleString();
+    if($('tgStatStorage')) $('tgStatStorage').textContent = `${dbMb} MB SQLite`;
+    if($('tgStatStorageSub')) $('tgStatStorageSub').textContent = '0 bytes MongoDB used';
+    if($('tgTabPill')) $('tgTabPill').textContent = total > 1000 ? `${(total/1000).toFixed(1)}k` : String(total);
+  }catch(err){
+    console.error('Failed to load Telegram stats:', err);
+  }
+}
+
+async function loadTelegramChannels(){
+  const container = $('tgChannelPills');
+  const select = $('tgFilterChannel');
+  if(!container) return;
+
+  try{
+    const res = await fetch('/api/telegram/channels');
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const channels = await res.json();
+
+    if($('tgChannelCountPill')) $('tgChannelCountPill').textContent = `${channels.length} Groups / Channels`;
+
+    // Populate dropdown
+    if(select){
+      const curr = tgActiveChannel || select.value;
+      select.innerHTML = '<option value="">All Target Communities (' + channels.length + ')</option>' +
+        channels.map(c => `<option value="${esc(c.channel)}">${esc(c.channel)} (${Number(c.count).toLocaleString()})</option>`).join('');
+      select.value = curr;
+    }
+
+    // Populate Pill Cloud
+    if(!channels.length){
+      container.innerHTML = '<div style="font-size:.8rem;color:var(--text3)">No channels recorded yet.</div>';
+      return;
+    }
+
+    container.innerHTML = channels.map(c => {
+      const isActive = tgActiveChannel === c.channel;
+      const cls = isActive ? 'tg-channel-pill active' : 'tg-channel-pill';
+      return `<div class="${cls}" onclick="selectTgChannelPill('${esc(c.channel)}')">
+        <span>${esc(c.channel)}</span>
+        <strong style="font-weight:800;opacity:.85">${Number(c.count).toLocaleString()}</strong>
+      </div>`;
+    }).join('');
+  }catch(err){
+    console.error('Failed to load Telegram channels:', err);
+    if(container) container.innerHTML = `<div style="font-size:.8rem;color:var(--red-l)">Error loading channels: ${esc(err.message)}</div>`;
+  }
+}
+
+async function loadTelegramUsers(){
+  const body = $('telegramTableBody');
+  if(!body) return;
+  body.innerHTML = '<div class="empty"><div class="empty-ico">✈️</div><div class="empty-txt">Loading Telegram members…</div></div>';
+
+  const q = ($('tgSearchInput')?.value || '').trim();
+  const ch = tgActiveChannel || ($('tgFilterChannel')?.value || '');
+  const usernameFilter = $('tgFilterUsername')?.value || 'all';
+
+  const params = new URLSearchParams({
+    page: String(tgPage),
+    limit: String(tgLimit)
+  });
+  if(q) params.append('search', q);
+  if(ch) params.append('channel', ch);
+  if(usernameFilter !== 'all') params.append('has_username', usernameFilter);
+
+  try{
+    const res = await fetch(`/api/telegram/users?${params.toString()}`);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderTelegramUsers(data);
+  }catch(err){
+    console.error('Failed to load Telegram users:', err);
+    body.innerHTML = `<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-txt">Failed to load Telegram members.<br>${esc(err.message)}</div></div>`;
+  }
+}
+
+function renderTelegramUsers(data){
+  const body = $('telegramTableBody');
+  if(!body) return;
+
+  const users = data.users || [];
+  const total = Number(data.total || 0);
+  tgPage = Number(data.page || 1);
+  tgLimit = Number(data.limit || 50);
+  tgTotalPages = Number(data.total_pages || 1);
+
+  if($('tgPill')) $('tgPill').textContent = `${total.toLocaleString()} leads`;
+
+  // Update Pagination Controls
+  const startIdx = total === 0 ? 0 : (tgPage - 1) * tgLimit + 1;
+  const endIdx = Math.min(total, tgPage * tgLimit);
+  if($('tgPaginationSummary')) $('tgPaginationSummary').textContent = `Showing ${startIdx.toLocaleString()}-${endIdx.toLocaleString()} of ${total.toLocaleString()} leads`;
+  if($('tgCurrentPage')) $('tgCurrentPage').textContent = tgPage;
+  if($('tgTotalPages')) $('tgTotalPages').textContent = tgTotalPages;
+
+  if($('btnTgFirst')) $('btnTgFirst').disabled = (tgPage <= 1);
+  if($('btnTgPrev')) $('btnTgPrev').disabled = (tgPage <= 1);
+  if($('btnTgNext')) $('btnTgNext').disabled = (tgPage >= tgTotalPages);
+  if($('btnTgLast')) $('btnTgLast').disabled = (tgPage >= tgTotalPages);
+
+  if(!users || users.length === 0){
+    body.innerHTML = '<div class="empty"><div class="empty-ico">🔍</div><div class="empty-txt">No Telegram members match the selected filters.</div></div>';
+    return;
+  }
+
+  body.innerHTML = users.map(u => {
+    const initial = (u.full_name || u.username || '?')[0].toUpperCase();
+    const initials = `<div class="av" style="width:34px;height:34px;border-radius:10px;font-size:13px;background:linear-gradient(135deg,#0284c7,#0369a1);box-shadow:0 0 10px rgba(2,132,199,.25)">${esc(initial)}</div>`;
+
+    const handleHtml = u.username && u.username !== '@'
+      ? `<a class="tg-handle-badge" href="https://t.me/${esc(u.username.replace('@',''))}" target="_blank" rel="noopener noreferrer" title="Open profile in Telegram">
+           <span>${esc(u.username)}</span>
+           <span style="font-size:10px">↗</span>
+         </a>`
+      : `<span class="tg-handle-none">No handle</span>`;
+
+    const timeStr = u.scraped_at ? fmtTime(u.scraped_at) : '—';
+    const dateStr = u.scraped_at ? new Date(u.scraped_at).toLocaleDateString([], {month:'short', day:'numeric'}) : '';
+
+    const actionHtml = u.username && u.username !== '@'
+      ? `<button class="btn-dm-action" type="button" style="border-color:rgba(56,189,248,.35);background:rgba(56,189,248,.12);color:#38bdf8" onclick="copyText('${esc(u.username)}', this)" title="Copy username to clipboard">
+           📋 Copy @
+         </button>`
+      : `<button class="btn-dm-action" type="button" style="border-color:rgba(124,58,237,.35);background:rgba(124,58,237,.12);color:var(--purple-l)" onclick="copyText('${esc(u.user_id)}', this)" title="Copy Telegram User ID">
+           📋 Copy ID
+         </button>`;
+
+    return `
+      <div class="tg-tbl-row">
+        <!-- Member / User ID -->
+        <div style="display:flex;align-items:center;gap:10px;overflow:hidden">
+          ${initials}
+          <div style="overflow:hidden">
+            <div style="font-weight:700;font-size:.84rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(u.full_name)} (ID: ${esc(u.user_id)})">${esc(u.full_name)}</div>
+            <div class="usr-id-badge" style="cursor:pointer;margin-top:2px" onclick="copyText('${esc(u.user_id)}', this)" title="Click to copy Telegram ID">
+              ID: ${esc(u.user_id)}
+            </div>
+          </div>
+        </div>
+
+        <!-- Telegram Handle -->
+        <div style="overflow:hidden">
+          ${handleHtml}
+        </div>
+
+        <!-- Source Community -->
+        <div style="overflow:hidden">
+          <span class="tg-src-badge" title="${esc(u.source_channel)}" onclick="selectTgChannelPill('${esc(u.source_channel)}')" style="cursor:pointer">
+            📢 ${esc(u.source_channel)}
+          </span>
+        </div>
+
+        <!-- Extracted At -->
+        <div style="font-size:.78rem;color:var(--text2);display:flex;flex-direction:column;gap:1px">
+          <span>${dateStr}</span>
+          <span style="font-size:.7rem;color:var(--text3)">${timeStr}</span>
+        </div>
+
+        <!-- Quick Action -->
+        <div>
+          ${actionHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function filterTelegramUsers(){
+  tgPage = 1;
+  clearTimeout(tgSearchDebounceTimer);
+  tgSearchDebounceTimer = setTimeout(() => {
+    loadTelegramUsers();
+  }, 300);
+}
+
+function onTgChannelSelectChange(){
+  const sel = $('tgFilterChannel');
+  tgActiveChannel = sel ? sel.value : '';
+  highlightActiveChannelPill();
+  tgPage = 1;
+  loadTelegramUsers();
+}
+
+function selectTgChannelPill(chName){
+  if(tgActiveChannel === chName){
+    tgActiveChannel = ''; // toggle off
+  } else {
+    tgActiveChannel = chName;
+  }
+  const sel = $('tgFilterChannel');
+  if(sel) sel.value = tgActiveChannel;
+  highlightActiveChannelPill();
+  tgPage = 1;
+  loadTelegramUsers();
+}
+
+function highlightActiveChannelPill(){
+  const container = $('tgChannelPills');
+  if(!container) return;
+  const pills = container.querySelectorAll('.tg-channel-pill');
+  pills.forEach(p => {
+    const text = p.querySelector('span')?.textContent || '';
+    p.classList.toggle('active', text === tgActiveChannel);
+  });
+}
+
+function clearTgChannelFilter(){
+  tgActiveChannel = '';
+  const sel = $('tgFilterChannel');
+  if(sel) sel.value = '';
+  highlightActiveChannelPill();
+  tgPage = 1;
+  loadTelegramUsers();
+}
+
+function goToTgPage(page){
+  if(page < 1 || page > tgTotalPages || page === tgPage) return;
+  tgPage = page;
+  loadTelegramUsers();
+}
+
+function changeTgPageLimit(){
+  const sel = $('tgPageLimit');
+  if(sel){
+    tgLimit = parseInt(sel.value, 10) || 50;
+    tgPage = 1;
+    loadTelegramUsers();
+  }
+}
+
+function copyText(text, elem){
+  if(!text) return;
+  const val = String(text);
+  navigator.clipboard.writeText(val).then(() => {
+    const orig = elem.textContent;
+    elem.textContent = '✅ Copied!';
+    setTimeout(() => {
+      elem.textContent = orig;
+    }, 1500);
+  }).catch(() => {
+    prompt('Copy value:', val);
+  });
 }
 
 /* ── Boot ────────────────────────────────────────────────────── */

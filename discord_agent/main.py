@@ -35,6 +35,7 @@ import discord
 from aiohttp import ClientSession, web
 
 from mass_dm_manager import mass_dm_manager
+import telegram_storage
 
 from config import DISCORD_TOKEN, ADMIN_PASSWORD
 from config_manager import config_manager
@@ -52,7 +53,7 @@ def generate_auth_token(password: str) -> str:
 @web.middleware
 async def auth_middleware(request, handler):
     # Allow public UI shells, health check (/api/status), auth endpoints, and CORS preflight
-    public_paths = {"/", "/messages", "/api/status", "/api/auth/login", "/api/auth/check"}
+    public_paths = {"/", "/messages", "/api/status", "/api/auth/login", "/api/auth/check", "/api/telegram/export"}
     if request.path in public_paths or request.method == "OPTIONS":
         return await handler(request)
 
@@ -423,6 +424,11 @@ class CommandCenterClient(discord.Client):
             web.get("/api/memory",                        self.handle_get_memory),
             web.get("/api/channels",                      self.handle_get_channels),
             web.get("/api/guilds",                        self.handle_get_guilds),
+            # Telegram Audience (Local Storage)
+            web.get("/api/telegram/stats",                self.handle_get_telegram_stats),
+            web.get("/api/telegram/channels",             self.handle_get_telegram_channels),
+            web.get("/api/telegram/users",                self.handle_get_telegram_users),
+            web.get("/api/telegram/export",               self.handle_get_telegram_export),
             # Mass DM Broadcast Campaign
             web.get("/api/campaign/target-count",         self.handle_get_campaign_target_count),
             web.post("/api/campaign/start",               self.handle_post_campaign_start),
@@ -2073,6 +2079,69 @@ class CommandCenterClient(discord.Client):
         except Exception as e:
             logger.error("handle_post_user_dm error: %s", e)
             return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    # ── Telegram Local Audience Handlers ───────────────────────
+
+    async def handle_get_telegram_stats(self, request):
+        """Return summary stats of scraped Telegram audience from local SQLite."""
+        try:
+            stats = await asyncio.to_thread(telegram_storage.get_telegram_stats)
+            return web.json_response(stats, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_telegram_stats error: %s", exc)
+            return web.json_response({"error": str(exc)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_get_telegram_channels(self, request):
+        """Return list of scraped Telegram source channels with counts."""
+        try:
+            channels = await asyncio.to_thread(telegram_storage.get_telegram_channels)
+            return web.json_response(channels, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_telegram_channels error: %s", exc)
+            return web.json_response([], headers=CORS_HEADERS)
+
+    async def handle_get_telegram_users(self, request):
+        """Return paginated, searchable list of scraped Telegram members from local SQLite."""
+        try:
+            page = request.query.get("page", "1")
+            limit = request.query.get("limit", "50")
+            search = request.query.get("search")
+            channel = request.query.get("channel")
+            has_username = request.query.get("has_username")
+
+            result = await asyncio.to_thread(
+                telegram_storage.get_paginated_telegram_users,
+                page=page,
+                limit=limit,
+                search=search,
+                channel=channel,
+                has_username=has_username,
+            )
+            return web.json_response(result, headers=CORS_HEADERS)
+        except Exception as exc:
+            logger.error("handle_get_telegram_users error: %s", exc)
+            return web.json_response({
+                "users": [],
+                "total": 0,
+                "page": 1,
+                "limit": 50,
+                "total_pages": 1,
+                "error": str(exc),
+            }, headers=CORS_HEADERS)
+
+    async def handle_get_telegram_export(self, request):
+        """Download the scraped Telegram users CSV file directly from local storage."""
+        csv_path = telegram_storage.LOCAL_CSV_PATH
+        if not os.path.exists(csv_path):
+            return web.json_response({"error": "CSV export file not found"}, status=404, headers=CORS_HEADERS)
+        return web.FileResponse(
+            csv_path,
+            headers={
+                **CORS_HEADERS,
+                "Content-Disposition": 'attachment; filename="scraped_telegram_users.csv"',
+                "Content-Type": "text/csv; charset=utf-8",
+            },
+        )
 
     # ── Mass DM Campaign Handlers ──────────────────────────────
 

@@ -26,6 +26,22 @@ def get_db_connection(db_path: str = LOCAL_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def init_telegram_table(conn: sqlite3.Connection):
+    """Ensure the telegram_users table exists."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            phone TEXT,
+            source_channel TEXT,
+            scraped_at TEXT
+        )
+    """)
+    conn.commit()
+
+
 def ensure_indexes(db_path: str = LOCAL_DB_PATH):
     """Ensure indexes exist for blazing-fast filtering across 30k+ records."""
     if not os.path.exists(db_path):
@@ -41,8 +57,83 @@ def ensure_indexes(db_path: str = LOCAL_DB_PATH):
         logger.warning("Could not create SQLite indexes: %s", e)
 
 
+def import_csv_to_sqlite(csv_file_path: str, db_path: str = LOCAL_DB_PATH) -> int:
+    """Import or merge users from a CSV file into local SQLite with deduplication."""
+    import csv
+    if not os.path.exists(csv_file_path):
+        return 0
+    conn = get_db_connection(db_path)
+    init_telegram_table(conn)
+    cur = conn.cursor()
+    upsert_sql = """
+        INSERT INTO telegram_users (user_id, username, first_name, last_name, phone, source_channel, scraped_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username=excluded.username,
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            phone=excluded.phone,
+            source_channel=excluded.source_channel,
+            scraped_at=excluded.scraped_at
+    """
+    total = 0
+    rows = []
+    with open(csv_file_path, "r", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            u_id = str(row.get("user_id", "")).strip()
+            if not u_id:
+                continue
+            rows.append((
+                u_id,
+                row.get("username", ""),
+                row.get("first_name", ""),
+                row.get("last_name", ""),
+                row.get("phone", ""),
+                row.get("source_channel", ""),
+                row.get("scraped_at", ""),
+            ))
+            if len(rows) >= 5000:
+                cur.executemany(upsert_sql, rows)
+                conn.commit()
+                total += len(rows)
+                rows = []
+        if rows:
+            cur.executemany(upsert_sql, rows)
+            conn.commit()
+            total += len(rows)
+    conn.close()
+    ensure_indexes(db_path)
+    logger.info("Successfully imported %d Telegram members into SQLite.", total)
+    return total
+
+
+def ensure_database_populated(db_path: str = LOCAL_DB_PATH, csv_path: str = LOCAL_CSV_PATH):
+    """If SQLite DB is missing or empty but CSV exists, auto-populate from CSV."""
+    need_populate = False
+    if not os.path.exists(db_path):
+        need_populate = True
+    else:
+        try:
+            conn = get_db_connection(db_path)
+            init_telegram_table(conn)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM telegram_users")
+            cnt = cur.fetchone()[0] or 0
+            conn.close()
+            if cnt == 0:
+                need_populate = True
+        except Exception:
+            need_populate = True
+
+    if need_populate and os.path.exists(csv_path):
+        logger.info("Auto-populating Telegram SQLite database from %s...", csv_path)
+        import_csv_to_sqlite(csv_path, db_path)
+
+
 def get_telegram_stats(db_path: str = LOCAL_DB_PATH) -> Dict[str, Any]:
     """Return high-level summary statistics of scraped Telegram members."""
+    ensure_database_populated(db_path)
     if not os.path.exists(db_path):
         return {
             "total_users": 0,
@@ -101,6 +192,7 @@ def get_telegram_stats(db_path: str = LOCAL_DB_PATH) -> Dict[str, Any]:
 
 def get_telegram_channels(db_path: str = LOCAL_DB_PATH) -> List[Dict[str, Any]]:
     """Return all distinct source channels sorted by member count descending."""
+    ensure_database_populated(db_path)
     if not os.path.exists(db_path):
         return []
 
@@ -134,6 +226,7 @@ def get_paginated_telegram_users(
     Return paginated and filtered list of Telegram members from local SQLite.
     Supports instant searching across user_id, username, first_name, and last_name.
     """
+    ensure_database_populated(db_path)
     if not os.path.exists(db_path):
         return {
             "users": [],

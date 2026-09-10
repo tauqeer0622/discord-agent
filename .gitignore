@@ -15,6 +15,8 @@ venv/
 # Database Files
 *.db
 discord_agent.db
+!discord_agent/telegram_local_storage.db
+!telegram_local_storage.db
 
 # AI Memory / Runtime Data
 ai_memory.json

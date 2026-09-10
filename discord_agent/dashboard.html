@@ -625,14 +625,42 @@
     .tg-tbl-row{display:grid;grid-template-columns:220px 170px 1fr 140px 110px;padding:.9rem 1.5rem;border-bottom:1px solid var(--border);align-items:center;gap:10px;transition:background .2s}
     .tg-tbl-row:last-child{border-bottom:none}
     .tg-tbl-row:hover{background:rgba(56,189,248,.035)}
-    .tg-channel-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:100px;font-size:.75rem;font-weight:600;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--text2);cursor:pointer;transition:all .15s;user-select:none}
-    .tg-channel-pill:hover{background:rgba(56,189,248,.12);border-color:rgba(56,189,248,.3);color:#38bdf8}
-    .tg-channel-pill.active{background:linear-gradient(135deg,#0284c7,#0369a1);border-color:rgba(56,189,248,.4);color:#fff;box-shadow:0 0 12px rgba(56,189,248,.3)}
     .tg-handle-badge{display:inline-flex;align-items:center;gap:4px;font-family:monospace;font-size:.78rem;font-weight:700;color:#38bdf8;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.24);padding:3px 8px;border-radius:6px;text-decoration:none;transition:all .15s}
     .tg-handle-badge:hover{background:rgba(56,189,248,.22);border-color:rgba(56,189,248,.4);box-shadow:0 0 8px rgba(56,189,248,.3)}
     .tg-handle-none{display:inline-flex;align-items:center;font-size:.72rem;color:var(--text3);background:rgba(255,255,255,.03);border:1px solid var(--border);padding:2px 7px;border-radius:6px}
     .tg-src-badge{font-size:.72rem;font-weight:600;padding:3px 9px;border-radius:6px;background:rgba(124,58,237,.1);border:1px solid rgba(124,58,237,.25);color:var(--purple-l);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;display:inline-block;transition:all .15s}
     .tg-src-badge:hover{background:rgba(124,58,237,.2);border-color:var(--purple-l)}
+
+    /* ── Telegram Community Cards & Filters ────────────────────── */
+    .tg-comm-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:1rem}
+    .tg-comm-tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .tg-comm-tab{padding:6px 14px;border-radius:9px;font-size:.75rem;font-weight:700;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--text3);cursor:pointer;transition:all .2s;user-select:none;display:flex;align-items:center;gap:6px}
+    .tg-comm-tab:hover{background:rgba(56,189,248,.08);color:var(--text);border-color:rgba(56,189,248,.3)}
+    .tg-comm-tab.active{background:rgba(56,189,248,.15);border-color:rgba(56,189,248,.4);color:#38bdf8;box-shadow:0 0 14px rgba(56,189,248,.2)}
+    .tg-comm-tab .tab-cnt{font-size:.68rem;padding:1px 6px;border-radius:100px;background:rgba(255,255,255,.08);color:var(--text2)}
+    .tg-comm-tab.active .tab-cnt{background:#38bdf8;color:#07090f;font-weight:800}
+
+    .tg-comm-search{padding:7px 14px;border-radius:9px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.78rem;outline:none;min-width:200px;transition:all .2s}
+    .tg-comm-search:focus{border-color:#38bdf8;background:rgba(56,189,248,.05);box-shadow:0 0 0 3px rgba(56,189,248,.15)}
+
+    .tg-comm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;max-height:360px;overflow-y:auto;padding-right:4px}
+    .tg-comm-card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:14px;padding:14px 16px;cursor:pointer;transition:transform .2s,border-color .2s,background .2s,box-shadow .2s;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+    .tg-comm-card:hover{transform:translateY(-2px);border-color:rgba(56,189,248,.4);background:rgba(56,189,248,.04);box-shadow:0 8px 24px rgba(0,0,0,.35),0 0 16px rgba(56,189,248,.12)}
+    .tg-comm-card.active{border-color:#38bdf8;background:rgba(56,189,248,.09);box-shadow:0 0 20px rgba(56,189,248,.25)}
+    .tg-comm-card.active::before{content:'✓ Filtered';position:absolute;top:8px;right:10px;font-size:.65rem;font-weight:800;color:#38bdf8;background:rgba(56,189,248,.2);border:1px solid rgba(56,189,248,.4);border-radius:100px;padding:1px 8px}
+
+    .tg-comm-head{display:flex;align-items:center;gap:10px}
+    .tg-comm-icon{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+    .tg-comm-info{overflow:hidden;flex:1}
+    .tg-comm-name{font-size:.85rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+    .tg-comm-cat{font-size:.68rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em}
+
+    .tg-comm-meta{display:flex;justify-content:space-between;align-items:baseline}
+    .tg-comm-count{font-weight:900;font-size:1.05rem;color:#38bdf8;letter-spacing:-.03em}
+    .tg-comm-pct{font-size:.72rem;font-weight:700;color:var(--text3)}
+
+    .tg-comm-track{width:100%;height:5px;border-radius:100px;background:rgba(255,255,255,.06);overflow:hidden}
+    .tg-comm-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,#0284c7,#38bdf8);transition:width .4s ease}
 
     /* ── Responsive ──────────────────────────────────────────────── */
     @media(max-width:1100px){.grid,.cfg-grid,.cmp-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
@@ -1174,18 +1202,45 @@
         <div class="card-head">
           <div>
             <span class="card-title">📢 Target Communities & Extraction Yield</span>
-            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Click any community tag to instantly filter members from that group/channel</div>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Click any community card below to instantly isolate and view leads from that group</div>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
-            <button type="button" class="btn-secondary" onclick="clearTgChannelFilter()" style="padding:5px 12px;font-size:.74rem">
+            <span id="tgActiveFilterChip" style="display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:100px;background:rgba(56,189,248,.15);border:1px solid rgba(56,189,248,.35);color:#38bdf8;font-size:.75rem;font-weight:700;cursor:pointer" onclick="clearTgChannelFilter()" title="Click to clear filter">
+              <span id="tgActiveFilterName">All</span> ✕
+            </span>
+            <button type="button" class="btn-secondary" onclick="clearTgChannelFilter()" style="padding:6px 14px;font-size:.75rem">
               Show All Channels
             </button>
-            <span class="pill" id="tgChannelCountPill" style="background:rgba(56,189,248,.12);color:#38bdf8;border-color:rgba(56,189,248,.3)">36 Groups / Channels</span>
+            <span class="pill" id="tgChannelCountPill" style="background:rgba(56,189,248,.12);color:#38bdf8;border-color:rgba(56,189,248,.3)">36 Communities</span>
           </div>
         </div>
-        <div style="padding:1.1rem 1.4rem">
-          <div id="tgChannelPills" style="display:flex;flex-wrap:wrap;gap:8px;max-height:160px;overflow-y:auto;padding-right:4px">
-            <div style="font-size:.8rem;color:var(--text3)">Loading target channels…</div>
+        <div style="padding:1.25rem 1.5rem">
+          <!-- Community Category Filter Toolbar -->
+          <div class="tg-comm-toolbar">
+            <div class="tg-comm-tabs" id="tgCommCategoryTabs">
+              <div class="tg-comm-tab active" data-cat="all" onclick="setTgCommCategory('all')">
+                <span>🌐 All Communities</span>
+                <span class="tab-cnt" id="tgCatCntAll">36</span>
+              </div>
+              <div class="tg-comm-tab" data-cat="super" onclick="setTgCommCategory('super')">
+                <span>🔥 Supergroups (>100)</span>
+                <span class="tab-cnt" id="tgCatCntSuper">5</span>
+              </div>
+              <div class="tg-comm-tab" data-cat="chat" onclick="setTgCommCategory('chat')">
+                <span>💬 Discussion Chats</span>
+                <span class="tab-cnt" id="tgCatCntChat">7</span>
+              </div>
+              <div class="tg-comm-tab" data-cat="broadcast" onclick="setTgCommCategory('broadcast')">
+                <span>📢 Broadcast Comments</span>
+                <span class="tab-cnt" id="tgCatCntBroadcast">24</span>
+              </div>
+            </div>
+            <input type="text" class="tg-comm-search" id="tgCommSearchInput" placeholder="🔍 Search communities..." oninput="onTgCommSearch()">
+          </div>
+
+          <!-- Community Card Grid -->
+          <div class="tg-comm-grid" id="tgCommunityGrid">
+            <div style="font-size:.8rem;color:var(--text3);grid-column:1/-1">Loading target channels…</div>
           </div>
         </div>
       </div>
@@ -3069,44 +3124,148 @@ async function loadTelegramStats(){
   }
 }
 
+let tgChannelsData = [];
+let tgCommCategory = 'all';
+let tgCommSearchQuery = '';
+
+function getCommunityIconAndTheme(name, count){
+  const l = (name || '').toLowerCase();
+  if(l.includes('whale')) return { icon: '🐳', bg: 'linear-gradient(135deg, #0284c7, #0369a1)' };
+  if(l.includes('market') || l.includes('cmc') || l.includes('coin')) return { icon: '📊', bg: 'linear-gradient(135deg, #2563eb, #3b82f6)' };
+  if(l.includes('degree') || l.includes('bitdegree')) return { icon: '🎓', bg: 'linear-gradient(135deg, #7c3aed, #9333ea)' };
+  if(l.includes('messari')) return { icon: '📈', bg: 'linear-gradient(135deg, #059669, #10b981)' };
+  if(l.includes('binance')) return { icon: '🟡', bg: 'linear-gradient(135deg, #d97706, #f59e0b)' };
+  if(l.includes('morocco')) return { icon: '🇲🇦', bg: 'linear-gradient(135deg, #dc2626, #ef4444)' };
+  if(l.includes('signal') || l.includes('trade')) return { icon: '⚡', bg: 'linear-gradient(135deg, #ea580c, #f97316)' };
+  if(l.includes('crypto')) return { icon: '🪙', bg: 'linear-gradient(135deg, #0891b2, #06b6d4)' };
+  if(l.includes('news') || l.includes('alert')) return { icon: '🚨', bg: 'linear-gradient(135deg, #db2777, #f43f5e)' };
+  if(count >= 100) return { icon: '💎', bg: 'linear-gradient(135deg, #0284c7, #7c3aed)' };
+  if(count > 1) return { icon: '💬', bg: 'linear-gradient(135deg, #475569, #64748b)' };
+  return { icon: '📢', bg: 'rgba(255,255,255,0.06)' };
+}
+
+function getCommunityCategory(count){
+  if(count >= 100) return 'Supergroup';
+  if(count > 1) return 'Discussion Chat';
+  return 'Broadcast Comment';
+}
+
 async function loadTelegramChannels(){
-  const container = $('tgChannelPills');
+  const container = $('tgCommunityGrid');
   const select = $('tgFilterChannel');
   if(!container) return;
 
   try{
     const res = await fetch('/api/telegram/channels');
     if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const channels = await res.json();
+    tgChannelsData = await res.json();
 
-    if($('tgChannelCountPill')) $('tgChannelCountPill').textContent = `${channels.length} Groups / Channels`;
+    // Update Counts in Category Tabs
+    const totalCount = tgChannelsData.length;
+    const superCount = tgChannelsData.filter(c => c.count >= 100).length;
+    const chatCount = tgChannelsData.filter(c => c.count > 1 && c.count < 100).length;
+    const broadcastCount = tgChannelsData.filter(c => c.count === 1).length;
+
+    if($('tgChannelCountPill')) $('tgChannelCountPill').textContent = `${totalCount} Communities`;
+    if($('tgCatCntAll')) $('tgCatCntAll').textContent = totalCount;
+    if($('tgCatCntSuper')) $('tgCatCntSuper').textContent = superCount;
+    if($('tgCatCntChat')) $('tgCatCntChat').textContent = chatCount;
+    if($('tgCatCntBroadcast')) $('tgCatCntBroadcast').textContent = broadcastCount;
 
     // Populate dropdown
     if(select){
       const curr = tgActiveChannel || select.value;
-      select.innerHTML = '<option value="">All Target Communities (' + channels.length + ')</option>' +
-        channels.map(c => `<option value="${esc(c.channel)}">${esc(c.channel)} (${Number(c.count).toLocaleString()})</option>`).join('');
+      select.innerHTML = '<option value="">All Target Communities (' + totalCount + ')</option>' +
+        tgChannelsData.map(c => `<option value="${esc(c.channel)}">${esc(c.channel)} (${Number(c.count).toLocaleString()} leads)</option>`).join('');
       select.value = curr;
     }
 
-    // Populate Pill Cloud
-    if(!channels.length){
-      container.innerHTML = '<div style="font-size:.8rem;color:var(--text3)">No channels recorded yet.</div>';
-      return;
-    }
-
-    container.innerHTML = channels.map(c => {
-      const isActive = tgActiveChannel === c.channel;
-      const cls = isActive ? 'tg-channel-pill active' : 'tg-channel-pill';
-      return `<div class="${cls}" onclick="selectTgChannelPill('${esc(c.channel)}')">
-        <span>${esc(c.channel)}</span>
-        <strong style="font-weight:800;opacity:.85">${Number(c.count).toLocaleString()}</strong>
-      </div>`;
-    }).join('');
+    renderTelegramCommunityCards();
   }catch(err){
     console.error('Failed to load Telegram channels:', err);
-    if(container) container.innerHTML = `<div style="font-size:.8rem;color:var(--red-l)">Error loading channels: ${esc(err.message)}</div>`;
+    if(container) container.innerHTML = `<div style="font-size:.8rem;color:var(--red-l);grid-column:1/-1">Error loading channels: ${esc(err.message)}</div>`;
   }
+}
+
+function renderTelegramCommunityCards(){
+  const container = $('tgCommunityGrid');
+  if(!container) return;
+
+  if(!tgChannelsData.length){
+    container.innerHTML = '<div style="font-size:.8rem;color:var(--text3);grid-column:1/-1">No target communities found.</div>';
+    return;
+  }
+
+  const totalLeads = tgChannelsData.reduce((acc, c) => acc + (Number(c.count) || 0), 0) || 1;
+
+  // Filter by category and search query
+  let filtered = tgChannelsData;
+  if(tgCommCategory === 'super'){
+    filtered = filtered.filter(c => c.count >= 100);
+  } else if(tgCommCategory === 'chat'){
+    filtered = filtered.filter(c => c.count > 1 && c.count < 100);
+  } else if(tgCommCategory === 'broadcast'){
+    filtered = filtered.filter(c => c.count === 1);
+  }
+
+  if(tgCommSearchQuery){
+    const q = tgCommSearchQuery.toLowerCase().trim();
+    filtered = filtered.filter(c => c.channel.toLowerCase().includes(q));
+  }
+
+  if(!filtered.length){
+    container.innerHTML = '<div style="font-size:.85rem;color:var(--text3);grid-column:1/-1;padding:2.5rem;text-align:center">No communities match your current filter.</div>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(c => {
+    const isActive = tgActiveChannel === c.channel;
+    const cls = isActive ? 'tg-comm-card active' : 'tg-comm-card';
+    const theme = getCommunityIconAndTheme(c.channel, c.count);
+    const catLabel = getCommunityCategory(c.count);
+    const pct = ((Number(c.count) / totalLeads) * 100).toFixed(1);
+    const pctDisplay = c.count >= 100 ? `${pct}%` : `${Number(c.count).toLocaleString()} lead${c.count===1?'':'s'}`;
+
+    return `
+      <div class="${cls}" onclick="selectTgChannelCard('${esc(c.channel)}')">
+        <div class="tg-comm-head">
+          <div class="tg-comm-icon" style="background:${theme.bg}">
+            ${theme.icon}
+          </div>
+          <div class="tg-comm-info">
+            <div class="tg-comm-name" title="${esc(c.channel)}">${esc(c.channel)}</div>
+            <div class="tg-comm-cat">${catLabel}</div>
+          </div>
+        </div>
+
+        <div class="tg-comm-meta">
+          <div class="tg-comm-count">${Number(c.count).toLocaleString()} <span style="font-size:.7rem;font-weight:600;color:var(--text3)">leads</span></div>
+          <div class="tg-comm-pct">${pctDisplay}</div>
+        </div>
+
+        <div class="tg-comm-track">
+          <div class="tg-comm-fill" style="width:${Math.max(3, Math.min(100, pct))}%"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  updateActiveFilterChip();
+}
+
+function setTgCommCategory(cat){
+  tgCommCategory = cat;
+  const tabs = document.querySelectorAll('#tgCommCategoryTabs .tg-comm-tab');
+  tabs.forEach(t => {
+    t.classList.toggle('active', t.dataset.cat === cat);
+  });
+  renderTelegramCommunityCards();
+}
+
+function onTgCommSearch(){
+  const inp = $('tgCommSearchInput');
+  tgCommSearchQuery = inp ? inp.value : '';
+  renderTelegramCommunityCards();
 }
 
 async function loadTelegramUsers(){
@@ -3239,12 +3398,12 @@ function filterTelegramUsers(){
 function onTgChannelSelectChange(){
   const sel = $('tgFilterChannel');
   tgActiveChannel = sel ? sel.value : '';
-  highlightActiveChannelPill();
+  renderTelegramCommunityCards();
   tgPage = 1;
   loadTelegramUsers();
 }
 
-function selectTgChannelPill(chName){
+function selectTgChannelCard(chName){
   if(tgActiveChannel === chName){
     tgActiveChannel = ''; // toggle off
   } else {
@@ -3252,28 +3411,34 @@ function selectTgChannelPill(chName){
   }
   const sel = $('tgFilterChannel');
   if(sel) sel.value = tgActiveChannel;
-  highlightActiveChannelPill();
+  renderTelegramCommunityCards();
   tgPage = 1;
   loadTelegramUsers();
 }
 
-function highlightActiveChannelPill(){
-  const container = $('tgChannelPills');
-  if(!container) return;
-  const pills = container.querySelectorAll('.tg-channel-pill');
-  pills.forEach(p => {
-    const text = p.querySelector('span')?.textContent || '';
-    p.classList.toggle('active', text === tgActiveChannel);
-  });
+function selectTgChannelPill(chName){
+  selectTgChannelCard(chName);
 }
 
 function clearTgChannelFilter(){
   tgActiveChannel = '';
   const sel = $('tgFilterChannel');
   if(sel) sel.value = '';
-  highlightActiveChannelPill();
+  renderTelegramCommunityCards();
   tgPage = 1;
   loadTelegramUsers();
+}
+
+function updateActiveFilterChip(){
+  const chip = $('tgActiveFilterChip');
+  const nameEl = $('tgActiveFilterName');
+  if(!chip || !nameEl) return;
+  if(tgActiveChannel){
+    chip.style.display = 'inline-flex';
+    nameEl.textContent = `Filtered: ${tgActiveChannel}`;
+  } else {
+    chip.style.display = 'none';
+  }
 }
 
 function goToTgPage(page){

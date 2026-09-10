@@ -745,8 +745,8 @@
     <div class="tab-bar">
       <div class="tab on" id="tabOverview"        onclick="setTab('overview')">📊 Overview</div>
       <div class="tab"    id="tabConfigurations"  onclick="setTab('configurations')">⚙️ Configurations</div>
-      <div class="tab"    id="tabUsers"           onclick="setTab('users')">👥 Discord Users</div>
-      <div class="tab"    id="tabTelegram"        onclick="setTab('telegram')">✈️ Telegram Leads <span class="pill" id="tgTabPill" style="margin-left:5px;background:rgba(56,189,248,.18);color:#38bdf8;border-color:rgba(56,189,248,.35);padding:1px 7px;font-size:11px">33.1k</span></div>
+      <div class="tab"    id="tabUsers"           onclick="setTab('users')">👾 Discord Members</div>
+      <div class="tab"    id="tabTelegram"        onclick="setTab('telegram')">✈️ Telegram Audience <span class="pill" id="tgTabPill" style="margin-left:5px;background:rgba(56,189,248,.18);color:#38bdf8;border-color:rgba(56,189,248,.35);padding:1px 7px;font-size:11px">33.1k</span></div>
       <div class="tab"    id="tabCampaign"        onclick="setTab('campaign')">📢 Mass DM Broadcast</div>
     </div>
 
@@ -932,7 +932,10 @@
 
       <div class="card wide-card">
         <div class="card-head">
-          <span class="card-title">👥 Server Members Directory</span>
+          <div>
+            <span class="card-title">👾 Discord Server Members Directory</span>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Indexed exclusively from joined Discord servers (MongoDB Atlas)</div>
+          </div>
           <span class="pill" id="userPill">0 users</span>
         </div>
         <div style="padding:1.5rem">
@@ -1642,6 +1645,12 @@ function setMode(m){
 /* ── Tab switching ───────────────────────────────────────────── */
 function setTab(t){
   tab=t; localStorage.setItem('ccTab',t);
+  try {
+    const targetHash = t === 'users' ? 'discord' : t;
+    if(window.location.hash.replace('#', '').toLowerCase() !== targetHash){
+      history.replaceState(null, '', `#${targetHash}`);
+    }
+  } catch(e) {}
   $('tabOverview').classList.toggle('on', t==='overview');
   $('tabConfigurations').classList.toggle('on', t==='configurations');
   $('tabUsers').classList.toggle('on', t==='users');
@@ -3298,6 +3307,13 @@ function copyText(text, elem){
 
 /* ── Boot ────────────────────────────────────────────────────── */
 window.addEventListener('load', async () => {
+  const hash = (window.location.hash || '').replace('#', '').toLowerCase();
+  if (hash === 'telegram') tab = 'telegram';
+  else if (hash === 'discord' || hash === 'users') tab = 'users';
+  else if (hash === 'configurations' || hash === 'configs') tab = 'configurations';
+  else if (hash === 'campaign') tab = 'campaign';
+  else if (hash === 'overview') tab = 'overview';
+
   setMode(mode);
   setTab(tab);
   

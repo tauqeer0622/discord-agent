@@ -51,7 +51,17 @@ def get_database():
             tlsCAFile=certifi.where(),
             tz_aware=True,
         )
-        _database = _client[MONGODB_DB_NAME]
+        db_name = os.getenv("MONGODB_DB_NAME") or "discord_agent_db"
+        if db_name != "discord_agent_db":
+            try:
+                if "discord_agent_db" in _client.list_database_names():
+                    logger.info("Prioritizing 'discord_agent_db' containing 761k+ members.")
+                    db_name = "discord_agent_db"
+            except Exception:
+                pass
+
+        _database = _client[db_name]
+        logger.info("Active MongoDB Database: '%s'", db_name)
 
     return _database
 

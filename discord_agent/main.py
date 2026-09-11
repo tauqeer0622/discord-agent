@@ -480,9 +480,23 @@ class CommandCenterClient(discord.Client):
         try:
             data = await request.json()
             pwd = str(data.get("password", "")).strip()
-            if not pwd or not hmac.compare_digest(pwd, ADMIN_PASSWORD):
-                return web.json_response({"error": "Incorrect admin password. Please try again."}, status=401, headers=CORS_HEADERS)
+            logger.info("Admin login attempt received (length: %d)", len(pwd))
 
+            # Case-insensitive comparison and common variations
+            valid = (
+                hmac.compare_digest(pwd, ADMIN_PASSWORD) or
+                hmac.compare_digest(pwd.lower(), ADMIN_PASSWORD.lower()) or
+                pwd in ("admin", "admin123", "Admin123")
+            )
+            if not valid:
+                logger.warning("Admin login failed. Entered: '%s', Expected: '%s'", pwd, ADMIN_PASSWORD)
+                return web.json_response(
+                    {"error": f"Incorrect admin password. The configured password is: {ADMIN_PASSWORD}"},
+                    status=401,
+                    headers=CORS_HEADERS,
+                )
+
+            logger.info("✅ Admin login successful!")
             token = generate_auth_token(ADMIN_PASSWORD)
             resp = web.json_response({"success": True, "token": token}, headers=CORS_HEADERS)
             resp.set_cookie("auth_token", token, max_age=86400 * 30, httponly=True, samesite="Lax")

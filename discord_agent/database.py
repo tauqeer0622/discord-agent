@@ -15,7 +15,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-MONGODB_URI = os.getenv("MONGODB_URI")
+MONGODB_URI = os.getenv("NEW_MONGODB_URI") or os.getenv("MONGODB_URI")
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "discord_agent_db")
 LEGACY_DB_PATH = os.getenv("LEGACY_DB_PATH", "discord_agent.db")
 HOURLY_REPLY_LIMIT = 10
@@ -39,6 +39,12 @@ def get_database():
         raise RuntimeError("MONGODB_URI is missing from the environment.")
 
     if _database is None:
+        host = MONGODB_URI.split("@")[-1].split("/")[0] if "@" in MONGODB_URI else "unknown"
+        if "socialmediapost" in host:
+            logger.warning("⚠️  ALERT: Connecting to OLD quota-limited cluster: %s", host)
+        else:
+            logger.info("✅ Connected to active MongoDB cluster: %s", host)
+
         _client = MongoClient(
             MONGODB_URI,
             serverSelectionTimeoutMS=10000,

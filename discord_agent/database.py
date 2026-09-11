@@ -796,6 +796,11 @@ def migrate_slim_users():
 
     try:
         collection = get_collection("discord_users")
+        # Check if legacy fields exist before attempting update
+        if not collection.find_one({"avatar_url": {"$exists": True}}):
+            logger.info("migrate_slim_users: documents already slimmed, skipping.")
+            return 0
+
         result = collection.update_many(
             {},  # all documents
             {"$unset": {

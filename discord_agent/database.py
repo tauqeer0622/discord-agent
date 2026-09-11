@@ -83,7 +83,18 @@ def drop_redundant_indexes():
 def initialize_database():
     from pymongo.errors import OperationFailure
     database = get_database()
-    _client.admin.command("ping")
+    
+    # Retry ping up to 3 times with a short pause for cloud cold-starts
+    for attempt in range(1, 4):
+        try:
+            _client.admin.command("ping")
+            break
+        except Exception as exc:
+            if attempt < 3:
+                logger.warning("MongoDB ping attempt %d failed (%s). Retrying in 3s...", attempt, exc)
+                time.sleep(3)
+            else:
+                raise
 
     # Reclaim storage first by dropping obsolete indexes
     drop_redundant_indexes()

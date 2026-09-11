@@ -232,6 +232,7 @@ async def scrape_target(
 
                 if len(users_scraped) % 250 == 0:
                     logger.info("  ↳ Scraped %d valid members so far (%d admins skipped)...", len(users_scraped), skipped_admins)
+                    await asyncio.sleep(0.35)  # Safe cursor pacing to prevent Telegram FloodWait
 
         except FloodWaitError as fwe:
             logger.warning("⏳ Telegram rate limit hit. Waiting %d seconds...", fwe.seconds)
@@ -376,6 +377,8 @@ async def main():
     parser.add_argument("--output", "-o", type=str, default="scraped_telegram_users.csv", help="CSV output filename (default: scraped_telegram_users.csv)")
     parser.add_argument("--limit", "-l", type=int, default=10000, help="Maximum members to scrape per target (default: 10000)")
     parser.add_argument("--no-db", action="store_true", help="Do not save to MongoDB (CSV only)")
+    parser.add_argument("--force", "-f", action="store_true", help="Force re-scraping targets already present in MongoDB")
+    parser.add_argument("--delay", "-d", type=float, default=2.5, help="Safe delay in seconds between targets (default: 2.5s)")
     args = parser.parse_args()
 
     client = get_telegram_client()
@@ -443,9 +446,35 @@ async def main():
         logger.error("No targets selected. Exiting.")
         return
 
+    # Check already scraped channels in MongoDB to focus on remaining targets
+    already_indexed = {}
+    if not args.force:
+        try:
+            import telegram_storage
+            ch_list = telegram_storage.get_telegram_channels()
+            already_indexed = {c["channel"].lower().strip(): c["count"] for c in ch_list if c.get("channel")}
+            logger.info("Found %d existing communities in MongoDB. Remaining targets will be prioritized.", len(already_indexed))
+        except Exception as exc:
+            logger.debug("Could not check existing channels: %s", exc)
+
     total_scraped = 0
-    for target in targets:
+    for idx, target in enumerate(targets, 1):
         target_ref = target if isinstance(target, str) else getattr(target, "title", str(target))
+        clean_target = str(target_ref).strip().replace("https://t.me/", "").replace("t.me/", "").lower()
+
+        # Check if already indexed
+        if not args.force and already_indexed:
+            matched_count = None
+            for ch_name, count in already_indexed.items():
+                if clean_target in ch_name or ch_name in clean_target:
+                    matched_count = count
+                    break
+            if matched_count and matched_count >= 50:
+                logger.info("[%d/%d] ⏭️ Skipping '%s' (already has %d members in MongoDB). Use --force to re-scrape.", 
+                            idx, len(targets), target_ref, matched_count)
+                continue
+
+        logger.info("[%d/%d] 🎯 Scraping target: %s ...", idx, len(targets), target_ref)
         users = await scrape_target(
             client=client,
             target_link=target_ref if isinstance(target, str) else str(getattr(target, "id", target_ref)),
@@ -454,6 +483,10 @@ async def main():
             max_members=args.limit,
         )
         total_scraped += len(users)
+
+        if args.delay > 0 and idx < len(targets):
+            logger.info("⏳ Pacing pause (%.1fs) before next target to prevent FloodWait...", args.delay)
+            await asyncio.sleep(args.delay)
 
     logger.info("🏁 ALL TARGETS COMPLETE! Total users discovered & saved: %d", total_scraped)
     print(f"\n✅ All done! Users exported to: {args.output}\n")

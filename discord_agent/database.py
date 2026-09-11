@@ -941,33 +941,50 @@ def get_latest_campaign_record():
 
 
 _server_counts_cache = {"data": None, "expires_at": 0.0}
+_server_counts_lock = Lock()
 
 
 def get_server_member_counts():
-    """Aggregate member count per server in MongoDB (cached 20s to absorb rapid API calls)."""
+    """Aggregate member count per server in MongoDB (cached 180s with mutex to prevent dogpiling & 502s)."""
     now = time.time()
     if _server_counts_cache["data"] is not None and now < _server_counts_cache["expires_at"]:
         return _server_counts_cache["data"]
 
-    collection = get_collection("discord_users")
-    pipeline = [
-        {"$unwind": "$servers"},
-        {"$group": {"_id": "$servers", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-    ]
-    results = {}
-    try:
-        for doc in collection.aggregate(pipeline):
-            s_name = doc.get("_id")
-            if s_name:
-                results[s_name] = doc.get("count", 0)
-    except Exception:
-        pass
+    # Non-blocking lock acquisition if stale data exists: return existing data immediately without waiting
+    acquired = _server_counts_lock.acquire(blocking=(_server_counts_cache["data"] is None))
+    if not acquired:
+        return _server_counts_cache["data"] or {}
 
-    _server_counts_cache["data"] = results
-    if results:  # Don't cache an empty result — retry on next call
-        _server_counts_cache["expires_at"] = now + 20.0
-    return results
+    try:
+        now = time.time()
+        if _server_counts_cache["data"] is not None and now < _server_counts_cache["expires_at"]:
+            return _server_counts_cache["data"]
+
+        collection = get_collection("discord_users")
+        pipeline = [
+            {"$unwind": "$servers"},
+            {"$group": {"_id": "$servers", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]
+        results = {}
+        try:
+            for doc in collection.aggregate(pipeline, maxTimeMS=20000):
+                s_name = doc.get("_id")
+                if s_name:
+                    results[s_name] = doc.get("count", 0)
+        except Exception as e:
+            logger.warning("get_server_member_counts aggregation warning: %s", e)
+
+        if results:
+            _server_counts_cache["data"] = results
+            _server_counts_cache["expires_at"] = time.time() + 180.0
+        elif _server_counts_cache["data"] is not None:
+            # Keep stale data for another 30 seconds on transient error
+            _server_counts_cache["expires_at"] = time.time() + 30.0
+
+        return _server_counts_cache["data"] or results
+    finally:
+        _server_counts_lock.release()
 
 
 def save_official_guild_stats(guild_list):

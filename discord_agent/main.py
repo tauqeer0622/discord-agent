@@ -361,19 +361,26 @@ async def _watch_discord_startup(client, timeout_seconds=120):
 class GatewayRateLimiter:
     """
     Paces gateway query_members calls to strictly respect Discord's rate limit
-    (120 commands / 60 seconds max). Guarantees steady, non-bursting throughput
-    without triggering socket throttling, 429s, or dropped responses.
+    (120 commands / 60 seconds max, Opcode 8 safe pacing).
+    Guarantees steady, non-bursting sequential throughput without triggering
+    socket throttling, 429s, or dropped gateway connections.
     """
-    def __init__(self, min_interval: float = 0.50, max_concurrent: int = 3):
+    def __init__(self, min_interval: float = 1.15, max_concurrent: int = 1):
         self.min_interval = min_interval
         self.sem = asyncio.Semaphore(max_concurrent)
         self.lock = asyncio.Lock()
         self.last_call = 0.0
+        self.backoff_until = 0.0
 
     async def acquire(self):
         await self.sem.acquire()
         async with self.lock:
             now = asyncio.get_event_loop().time()
+            if now < self.backoff_until:
+                sleep_time = self.backoff_until - now
+                logger.info("GatewayRateLimiter: In backoff period, sleeping %.1fs...", sleep_time)
+                await asyncio.sleep(sleep_time)
+                now = asyncio.get_event_loop().time()
             elapsed = now - self.last_call
             if elapsed < self.min_interval:
                 await asyncio.sleep(self.min_interval - elapsed)
@@ -381,6 +388,11 @@ class GatewayRateLimiter:
 
     def release(self):
         self.sem.release()
+
+    def trigger_backoff(self, seconds: float = 6.0):
+        """Pause gateway queries for N seconds on rate-limit or timeout."""
+        now = asyncio.get_event_loop().time()
+        self.backoff_until = max(self.backoff_until, now + seconds)
 
 
 class CommandCenterClient(discord.Client):
@@ -399,7 +411,7 @@ class CommandCenterClient(discord.Client):
         self.discord_disconnect_seen_at = None
         self.discord_last_error = None
         self.discord_auth_probe = None
-        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=0.50, max_concurrent=3)
+        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=1.15, max_concurrent=1)
         mass_dm_manager.set_client(self)
 
     # ── Web Server ─────────────────────────────────────────────
@@ -1574,9 +1586,9 @@ class CommandCenterClient(discord.Client):
             START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-!$[~*+")
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
-            SAVE_EVERY   = 15   # Save progress to MongoDB every N queries
-            BATCH_SIZE   = 8    # Prefixes per gather batch (larger = less overhead)
-            BATCH_PAUSE  = 0.05 # Tiny yield to keep event loop alive; rate limiter paces the rest
+            SAVE_EVERY   = 20   # Save progress to MongoDB every N queries
+            BATCH_SIZE   = 2    # Smooth sequential batches to prevent Discord Gateway rate limits
+            BATCH_PAUSE  = 0.20 # Paced breathing pause between batches
 
             # Check existing coverage in MongoDB
             db_counts = get_server_member_counts()
@@ -1645,7 +1657,10 @@ class CommandCenterClient(discord.Client):
                         timeout=25.0
                     )
                     return result
-                except Exception:
+                except Exception as q_exc:
+                    logger.debug("query_members('%s') issue on '%s': %s", prefix, guild.name, q_exc)
+                    if rate_limiter and hasattr(rate_limiter, "trigger_backoff"):
+                        rate_limiter.trigger_backoff(6.0)
                     return None
                 finally:
                     if rate_limiter:
@@ -1828,10 +1843,9 @@ class CommandCenterClient(discord.Client):
                 [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
             )
 
-            # Process up to 2 guilds concurrently — 3 caused OOM on Render (each guild
-            # holds a large visited-prefix set + seen_ids dict in RAM simultaneously).
-            # Stagger starts by 3s so fetch_members handshakes don't collide on the Gateway.
-            guild_pool_sem = asyncio.Semaphore(2)
+            # Process 1 guild at a time sequentially to strictly prevent Gateway Opcode 8 collisions,
+            # eliminate socket 429 rate-limiting, and keep RAM safely under 250MB on Render.
+            guild_pool_sem = asyncio.Semaphore(1)
 
             async def _guild_worker(g, start_delay: float = 0.0):
                 if start_delay > 0:

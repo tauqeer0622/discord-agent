@@ -146,6 +146,19 @@ def initialize_database():
         database.discord_users.create_index(
             [("is_bot", ASCENDING)]
         )
+        database.telegram_users.create_index(
+            [("user_id", ASCENDING)],
+            unique=True,
+        )
+        database.telegram_users.create_index(
+            [("source_channel", ASCENDING)]
+        )
+        database.telegram_users.create_index(
+            [("username", ASCENDING)]
+        )
+        database.telegram_users.create_index(
+            [("scraped_at", DESCENDING)]
+        )
         # Dropped indexes: display_name, last_seen_at, presence_status
 
         database.reply_rate_limit.update_one(

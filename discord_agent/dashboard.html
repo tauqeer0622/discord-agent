@@ -1191,9 +1191,9 @@
           <div class="stat-lbl">Target Communities</div>
         </div>
         <div class="stat" style="border-color:rgba(56,189,248,.25);background:rgba(56,189,248,.03)">
-          <div class="stat-ico">💾</div>
-          <div class="stat-val" id="tgStatStorage" style="font-size:1.35rem;font-weight:800;color:var(--text);margin-top:4px">4.8 MB SQLite</div>
-          <div class="stat-lbl" id="tgStatStorageSub" style="color:var(--green-l);font-weight:700">0 bytes MongoDB used</div>
+          <div class="stat-ico">☁️</div>
+          <div class="stat-val" id="tgStatStorage" style="font-size:1.35rem;font-weight:800;color:var(--text);margin-top:4px">MongoDB Atlas</div>
+          <div class="stat-lbl" id="tgStatStorageSub" style="color:var(--green-l);font-weight:700">discord_agent_db.telegram_users</div>
         </div>
       </div>
 
@@ -3116,8 +3116,9 @@ async function loadTelegramStats(){
     if($('tgStatTotal')) $('tgStatTotal').textContent = total.toLocaleString();
     if($('tgStatWithUsername')) $('tgStatWithUsername').textContent = withUsername.toLocaleString();
     if($('tgStatChannels')) $('tgStatChannels').textContent = channels.toLocaleString();
-    if($('tgStatStorage')) $('tgStatStorage').textContent = `${dbMb} MB SQLite`;
-    if($('tgStatStorageSub')) $('tgStatStorageSub').textContent = '0 bytes MongoDB used';
+    const backend = data.storage_backend || 'MongoDB Atlas';
+    if($('tgStatStorage')) $('tgStatStorage').textContent = backend.includes('MongoDB') ? 'MongoDB Atlas' : 'Local SQLite';
+    if($('tgStatStorageSub')) $('tgStatStorageSub').textContent = backend.includes('MongoDB') ? 'discord_agent_db.telegram_users' : 'Offline Backup';
     if($('tgTabPill')) $('tgTabPill').textContent = total > 1000 ? `${(total/1000).toFixed(1)}k` : String(total);
   }catch(err){
     console.error('Failed to load Telegram stats:', err);

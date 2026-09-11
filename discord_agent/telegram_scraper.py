@@ -337,11 +337,22 @@ async def scrape_target(
     logger.info("💾 Saved %d users to Local CSV: %s", len(users_scraped), output_csv)
 
     # ─────────────────────────────────────────────────────────────
-    # 2. LOCAL STORAGE: SAVE TO LOCAL SQLITE (Unlimited space, deduplicated)
+    # 2. MONGODB ATLAS: SAVE TO DISCORD_AGENT_DB
+    # ─────────────────────────────────────────────────────────────
+    if save_to_db:
+        try:
+            import telegram_storage
+            saved_mongo = telegram_storage.save_telegram_users(users_scraped)
+            logger.info("☁️ Saved %d users to MongoDB Atlas (discord_agent_db.telegram_users)", len(users_scraped))
+        except Exception as exc:
+            logger.warning("MongoDB Atlas save error: %s", exc)
+
+    # ─────────────────────────────────────────────────────────────
+    # 3. LOCAL STORAGE: SAVE TO LOCAL SQLITE (Offline backup)
     # ─────────────────────────────────────────────────────────────
     try:
         saved_sqlite = save_users_to_local_sqlite(users_scraped)
-        logger.info("💾 Saved %d users to Local SQLite database '%s' (0 bytes of MongoDB used)", len(users_scraped), LOCAL_DB_FILE)
+        logger.info("💾 Saved %d users to Local SQLite database '%s'", len(users_scraped), LOCAL_DB_FILE)
     except Exception as exc:
         logger.warning("Local SQLite save error: %s", exc)
 

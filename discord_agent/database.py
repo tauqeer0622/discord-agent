@@ -77,7 +77,7 @@ def drop_redundant_indexes():
     try:
         col = get_collection("discord_users")
         existing = col.index_information()
-        target_keys = {"last_seen_at", "display_name", "presence_status"}
+        target_keys = {"last_seen_at", "display_name", "presence_status", "username", "is_bot"}
         for name, info in list(existing.items()):
             key_fields = {k[0] for k in info.get("key", [])}
             if key_fields & target_keys:
@@ -86,6 +86,17 @@ def drop_redundant_indexes():
                     logger.info("Reclaimed storage: dropped obsolete index '%s'", name)
                 except Exception as e:
                     logger.warning("Failed to drop index '%s': %s", name, e)
+
+        # Also drop wasteful indexes on telegram_users
+        tg_col = get_collection("telegram_users")
+        tg_existing = tg_col.index_information()
+        for tg_idx in ["username_1", "scraped_at_-1"]:
+            if tg_idx in tg_existing:
+                try:
+                    tg_col.drop_index(tg_idx)
+                    logger.info("Reclaimed storage: dropped telegram index '%s'", tg_idx)
+                except Exception:
+                    pass
     except Exception as exc:
         logger.warning("drop_redundant_indexes check failed: %s", exc)
 
@@ -138,13 +149,7 @@ def initialize_database():
             unique=True,
         )
         database.discord_users.create_index(
-            [("username", ASCENDING)]
-        )
-        database.discord_users.create_index(
             [("servers", ASCENDING)]
-        )
-        database.discord_users.create_index(
-            [("is_bot", ASCENDING)]
         )
         database.telegram_users.create_index(
             [("user_id", ASCENDING)],
@@ -153,13 +158,7 @@ def initialize_database():
         database.telegram_users.create_index(
             [("source_channel", ASCENDING)]
         )
-        database.telegram_users.create_index(
-            [("username", ASCENDING)]
-        )
-        database.telegram_users.create_index(
-            [("scraped_at", DESCENDING)]
-        )
-        # Dropped indexes: display_name, last_seen_at, presence_status
+        # Dropped wasteful indexes: username, is_bot, display_name, last_seen_at, presence_status, scraped_at
 
         database.reply_rate_limit.update_one(
             {"_id": "global"},
@@ -837,7 +836,7 @@ def migrate_slim_users():
     try:
         collection = get_collection("discord_users")
         # Check if legacy fields exist before attempting update
-        if not collection.find_one({"avatar_url": {"$exists": True}}):
+        if not collection.find_one({"$or": [{"channels": {"$exists": True}}, {"bot_status": {"$exists": True}}]}):
             logger.info("migrate_slim_users: documents already slimmed, skipping.")
             return 0
 

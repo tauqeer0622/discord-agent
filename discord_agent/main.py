@@ -411,7 +411,7 @@ class CommandCenterClient(discord.Client):
         self.discord_disconnect_seen_at = None
         self.discord_last_error = None
         self.discord_auth_probe = None
-        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=1.15, max_concurrent=1)
+        self.gateway_rate_limiter = GatewayRateLimiter(min_interval=0.88, max_concurrent=1)
         mass_dm_manager.set_client(self)
 
     # ── Web Server ─────────────────────────────────────────────
@@ -1586,9 +1586,9 @@ class CommandCenterClient(discord.Client):
             START_CHARS  = list("abcdefghijklmnopqrstuvwxyz0123456789_.-!$[~*+")
             EXPAND_CHARS = list("abcdefghijklmnopqrstuvwxyz0123456789_")
             MAX_DEPTH    = 4
-            SAVE_EVERY   = 20   # Save progress to MongoDB every N queries
+            SAVE_EVERY   = 40   # Save progress to MongoDB every N queries
             BATCH_SIZE   = 2    # Smooth sequential batches to prevent Discord Gateway rate limits
-            BATCH_PAUSE  = 0.20 # Paced breathing pause between batches
+            BATCH_PAUSE  = 0.08 # Optimized breathing pause between batches
 
             # Check existing coverage in MongoDB
             db_counts = get_server_member_counts()
@@ -1823,29 +1823,40 @@ class CommandCenterClient(discord.Client):
             def _guild_sort_priority(g):
                 indexed = db_counts.get(g.name, 0)
                 official = getattr(g, "member_count", 0) or 1
+                rem = max(0, official - indexed)
                 cov = indexed / official
-                # Tier 0: Quick small servers (<10,000 members and <90% indexed) - finish in seconds!
+
+                # Tier 0: Massive unharvested servers (< 50% coverage, > 5,000 remaining)
+                # Yields 100 NEW members per query — huge instant surges!
+                if cov < 0.50 and rem > 5000:
+                    return (0, -rem)
+
+                # Tier 1: Medium-yield servers (50% to 85% coverage, > 2,000 remaining)
+                if cov < 0.85 and rem > 2000:
+                    return (1, -rem)
+
+                # Tier 2: Quick small servers (< 10,000 members, < 90% coverage)
                 if official < 10000 and cov < 0.90:
-                    return (0, official)
-                # Tier 1: Brand new / unindexed servers (<15% indexed) - start immediately!
-                if cov < 0.15:
-                    return (1, -official)
-                # Tier 2: Large incomplete servers (15% to 90% indexed)
-                if cov < 0.90:
-                    return (2, -official)
-                # Tier 3: Nearly complete or complete (>90% indexed)
-                return (3, -official)
+                    return (2, -rem)
+
+                # Tier 3: Diminishing-returns servers (>= 85% coverage, e.g. OpenSea, Binance)
+                # Deep-searched after high-yield servers are already harvested
+                if rem > 0 and cov < 0.98:
+                    return (3, -rem)
+
+                # Tier 4: Fully synced / complete (>= 98% coverage or 0 remaining)
+                return (4, 0)
 
             guild_list.sort(key=_guild_sort_priority)
             logger.info(
-                "Starting paced member discovery across %d guilds (priority: %s)...",
+                "Starting high-speed member discovery across %d guilds (priority: %s)...",
                 len(guild_list),
-                [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)})" for g in guild_list[:8]]
+                [f"{g.name} ({db_counts.get(g.name, 0)}/{getattr(g, 'member_count', 0)}, {max(0, getattr(g, 'member_count', 0) - db_counts.get(g.name, 0))} left)" for g in guild_list[:8]]
             )
 
-            # Process 1 guild at a time sequentially to strictly prevent Gateway Opcode 8 collisions,
-            # eliminate socket 429 rate-limiting, and keep RAM safely under 250MB on Render.
-            guild_pool_sem = asyncio.Semaphore(1)
+            # Process 3 guilds concurrently with global GatewayRateLimiter to maximize throughput
+            # while strictly serializing Opcode 8 gateway requests at safe 0.88s intervals.
+            guild_pool_sem = asyncio.Semaphore(3)
 
             async def _guild_worker(g, start_delay: float = 0.0):
                 if start_delay > 0:

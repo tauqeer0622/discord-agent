@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Playwright user data & browser sessions
+browser_data/
+ms-playwright/
+
+# SQLite database & local logs
+data/
+*.db
+*.sqlite3
+
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+scratch/

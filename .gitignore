@@ -51,3 +51,6 @@ htmlcov/
 *.tmp
 *.bak
 *.swp
+tmp/
+/*.jpg
+!discord_agent/x_engine/templates/*.jpg

@@ -96,6 +96,7 @@ class MassDmManager:
         image_bytes=None,
         image_filename=None,
         delay_mode="safe",
+        limit=None,
     ):
         """Initialize and launch a new server-targeted mass DM broadcast."""
         if self.state["status"] == "running":
@@ -104,7 +105,7 @@ class MassDmManager:
         if not message_template and not image_bytes:
             raise ValueError("Campaign must have message text or an image attachment.")
 
-        targets = get_campaign_target_users(server=server_name, user_type=user_type)
+        targets = get_campaign_target_users(server=server_name, user_type=user_type, limit=limit or 50)
         if not targets:
             raise ValueError(f"No matching members found for server: {server_name or 'All'}")
 

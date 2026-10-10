@@ -43,3 +43,9 @@ TARGET_CHANNELS = [
 ]
 
 TARGET_CHANNEL_IDS = [c["channel_id"] for c in TARGET_CHANNELS]
+
+# Discord OAuth2 Credentials
+DISCORD_CLIENT_ID = _clean_env_value("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = _clean_env_value("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = _clean_env_value("DISCORD_REDIRECT_URI") or "http://localhost:8080/api/oauth2/callback"
+DISCORD_BOT_TOKEN = _clean_env_value("DISCORD_BOT_TOKEN")

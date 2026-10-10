@@ -8,5 +8,16 @@ __pycache__/
 
 *.log
 discord_agent.db
+*.db
+*.db-journal
 *.session
 *.session-journal
+browser_data/
+x_engine/browser_data/
+*.local
+x_engine/media/debug_*
+x_engine/data/*.db
+x_engine/data/*.db-journal
+x_engine/data/previews/
+x_engine/scratch/
+*.csv

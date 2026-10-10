@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ApexPulse • Autonomous X Engagement Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="background-glow glow-1"></div>
+    <div class="background-glow glow-2"></div>
+    
+    <div class="app-container">
+        <!-- Top Navigation Bar -->
+        <header class="top-nav">
+            <div class="nav-brand">
+                <div class="brand-logo">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="currentColor"/>
+                    </svg>
+                </div>
+                <div class="brand-info">
+                    <h1>ApexPulse</h1>
+                    <span class="sub-label">Autonomous Crypto & Stocks Engagement</span>
+                </div>
+            </div>
+
+            <div class="nav-status-group">
+                <div class="status-pill" id="engineStatusPill">
+                    <span class="status-indicator"></span>
+                    <span id="engineStatusText">Connecting...</span>
+                </div>
+                <div class="mode-pill" id="modeStatusPill">
+                    <span id="modeStatusText">DRY RUN</span>
+                </div>
+                <button class="btn btn-outline" id="btnLoginBrowser" title="Open visible browser to log in to your X account">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+                    </svg>
+                    X Account Login
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Dashboard View -->
+        <main class="dashboard-content">
+            <!-- Metrics Row -->
+            <section class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-header">
+                        <span class="metric-title">Posts Scanned</span>
+                        <div class="metric-icon scan-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="metric-value" id="statTotalScanned">0</div>
+                    <div class="metric-footer">Crypto, Stocks & BTC streams</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-header">
+                        <span class="metric-title">Comments Today</span>
+                        <div class="metric-icon comment-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="metric-value" id="statCommentsToday">0</div>
+                    <div class="metric-footer" id="statQuotaRemaining">Quota: 0 / 25 daily</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-header">
+                        <span class="metric-title">Live Published</span>
+                        <div class="metric-icon live-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="metric-value" id="statLiveComments">0</div>
+                    <div class="metric-footer">Direct live responses on X</div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-header">
+                        <span class="metric-title">Dry Run Verified</span>
+                        <div class="metric-icon dry-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polygon points="10 8 16 12 10 16 10 8"></polygon>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="metric-value" id="statDryComments">0</div>
+                    <div class="metric-footer">Simulated without posting</div>
+                </div>
+            </section>
+
+            <!-- Real-time Activity Banner -->
+            <section class="activity-ticker">
+                <div class="ticker-label">
+                    <span class="ticker-pulse"></span>
+                    ACTIVE TASK
+                </div>
+                <div class="ticker-content" id="activityTicker">
+                    Waiting for engine to start...
+                </div>
+                <div class="ticker-controls">
+                    <button class="btn btn-primary" id="btnStartEngine">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Start Automation
+                    </button>
+                    <button class="btn btn-danger" id="btnStopEngine" disabled>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="6" width="12" height="12"></rect>
+                        </svg>
+                        Stop
+                    </button>
+                </div>
+            </section>
+
+            <!-- Tabs Section -->
+            <div class="dashboard-tabs">
+                <button class="tab-btn active" data-tab="feed">Comments & Feed</button>
+                <button class="tab-btn" data-tab="simulator">AI Comment Simulator</button>
+                <button class="tab-btn" data-tab="settings">Company & Rules</button>
+                <button class="tab-btn" data-tab="logs">Engine Console</button>
+            </div>
+
+            <!-- Tab 1: Live Feed -->
+            <section class="tab-pane active" id="tab-feed">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Recent Comments & Interactions</h2>
+                            <p class="panel-desc">Real-time log of tweets detected and company responses generated.</p>
+                        </div>
+                        <button class="btn btn-sm btn-ghost" id="btnRefreshFeed">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+
+                    <div class="feed-table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Target Tweet</th>
+                                    <th>Our Comment</th>
+                                    <th>Mode</th>
+                                    <th>Time</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="feedTableBody">
+                                <tr>
+                                    <td colspan="6" class="empty-state">No comments recorded yet. Start automation or run a test simulation!</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 2: AI Simulator -->
+            <section class="tab-pane" id="tab-simulator">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <div>
+                            <h2>AI Contextual Comment Simulator</h2>
+                            <p class="panel-desc">Paste any hypothetical crypto, stock, or BTC tweet to preview how the engine formulates its response.</p>
+                        </div>
+                    </div>
+
+                    <div class="simulator-grid">
+                        <div class="sim-input-box">
+                            <div class="form-group">
+                                <label>Target Tweet Author Handle</label>
+                                <input type="text" id="simAuthor" class="form-control" value="crypto_enthusiast" placeholder="e.g. wallstreet_bets">
+                            </div>
+                            <div class="form-group">
+                                <label>Topic / Matched Keyword</label>
+                                <select id="simKeyword" class="form-control">
+                                    <option value="BTC">Bitcoin (BTC)</option>
+                                    <option value="crypto">Crypto / Altcoins</option>
+                                    <option value="stocks">Stocks / Equities</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Tweet Content</label>
+                                <textarea id="simTweetText" class="form-control" rows="4" placeholder="Enter a tweet text, e.g.: Bitcoin just broke past key resistance at 95k! Are we heading straight to 100k or will we see a sharp pullback?"></textarea>
+                            </div>
+                            <button class="btn btn-primary" id="btnRunSimulation">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                                Generate Test Reply
+                            </button>
+                        </div>
+
+                        <div class="sim-output-box">
+                            <span class="preview-badge" id="simEngineType">ENGINE: PREVIEW</span>
+                            <div class="sim-result-container">
+                                <h4>Generated Response</h4>
+                                <p id="simOutputText" class="sim-output-text">Click "Generate Test Reply" to view the contextual comment generated by the system.</p>
+                                <div class="char-count" id="simCharCount">0 / 280 characters</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: Settings -->
+            <section class="tab-pane" id="tab-settings">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Targeting, Company Pitch & Anti-Ban Controls</h2>
+                            <p class="panel-desc">Fine-tune your brand positioning, target search queries, and safety rate limits.</p>
+                        </div>
+                        <button class="btn btn-primary" id="btnSaveSettings">Save Changes</button>
+                    </div>
+
+                    <form id="settingsForm" class="settings-grid">
+                        <div class="settings-col">
+                            <h3 class="settings-group-title">Company Profile</h3>
+                            <div class="form-group">
+                                <label>Company Name</label>
+                                <input type="text" id="cfgCompanyName" class="form-control" placeholder="e.g. ApexTrading">
+                            </div>
+                            <div class="form-group">
+                                <label>One-Liner Elevator Pitch</label>
+                                <textarea id="cfgCompanyOneLiner" class="form-control" rows="2" placeholder="Brief description of your product or service"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Call to Action (CTA)</label>
+                                <input type="text" id="cfgCompanyCTA" class="form-control" placeholder="e.g. Check out our live market insights or DM us!">
+                            </div>
+                            <div class="form-group">
+                                <label>Website / Social URL</label>
+                                <input type="text" id="cfgCompanyUrl" class="form-control" placeholder="https://yoursite.com">
+                            </div>
+
+                            <h3 class="settings-group-title" style="margin-top: 24px;">AI Provider Settings</h3>
+                            <div class="form-group">
+                                <label>OpenAI API Key (Optional)</label>
+                                <input type="password" id="cfgOpenAIKey" class="form-control" placeholder="sk-... (Leave empty to use smart built-in templates)">
+                                <small class="hint">Smart dynamic template engine is active when no API key is provided.</small>
+                            </div>
+                        </div>
+
+                        <div class="settings-col">
+                            <h3 class="settings-group-title">Search & Targeting Rules</h3>
+                            <div class="form-group">
+                                <label>Target Keywords (comma-separated)</label>
+                                <input type="text" id="cfgTargetKeywords" class="form-control" placeholder="crypto, BTC, bitcoin, stocks, $BTC, $ETH">
+                                <small class="hint">Terms the bot scans for in real-time X Live feed.</small>
+                            </div>
+                            <div class="form-group">
+                                <label>Negative Keywords / Spam Filter (comma-separated)</label>
+                                <input type="text" id="cfgNegativeKeywords" class="form-control" placeholder="airdrop, giveaway, whatsapp, dm me for signals">
+                                <small class="hint">Tweets containing any of these words will be automatically ignored.</small>
+                            </div>
+
+                            <h3 class="settings-group-title" style="margin-top: 24px;">Anti-Ban Safety Controls</h3>
+                            <div class="form-group toggle-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-title">Dry Run Mode</span>
+                                    <span class="toggle-desc">Scans tweets & generates comments without actually clicking post. (Recommended for testing)</span>
+                                </label>
+                                <input type="checkbox" id="cfgDryRun" class="toggle-input">
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label>Min Delay (Seconds)</label>
+                                    <input type="number" id="cfgMinDelay" class="form-control" min="30" max="600">
+                                </div>
+                                <div class="form-group">
+                                    <label>Max Delay (Seconds)</label>
+                                    <input type="number" id="cfgMaxDelay" class="form-control" min="60" max="1200">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Daily Comment Quota Cap</label>
+                                <input type="number" id="cfgDailyLimit" class="form-control" min="5" max="100">
+                                <small class="hint">Maximum replies per 24 hours to prevent account spam flags.</small>
+                            </div>
+
+                            <h3 class="settings-group-title" style="margin-top: 24px;">Media & Image Attachment</h3>
+                            <div class="form-group toggle-group">
+                                <label class="toggle-label">
+                                    <span class="toggle-title">Attach Image to Comments</span>
+                                    <span class="toggle-desc">Automatically upload and post a chart/infographic image alongside every reply.</span>
+                                </label>
+                                <input type="checkbox" id="cfgAttachImage" class="toggle-input">
+                            </div>
+                            <div class="form-group">
+                                <label>Media Folder / Image Path</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" id="cfgMediaImagePath" class="form-control" placeholder="./media" style="flex: 1;">
+                                    <button type="button" class="btn btn-sm btn-secondary" id="btnUploadMediaTrigger" style="white-space: nowrap;">Upload Image</button>
+                                    <input type="file" id="mediaFileInput" accept="image/*" style="display: none;">
+                                </div>
+                                <small class="hint">Folder of images (auto-selects from pool) or specific file path.</small>
+                            </div>
+                            <div id="mediaStatusInfo" style="margin-top: 8px; font-size: 0.85rem; color: var(--text-muted);">
+                                <span>Active Images in Pool: <strong id="mediaCount" style="color: var(--accent);">Loading...</strong></span>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Tab 4: Logs -->
+            <section class="tab-pane" id="tab-logs">
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <div>
+                            <h2>Real-time Engine Console</h2>
+                            <p class="panel-desc">Low-level execution logs, browser events, and interaction records.</p>
+                        </div>
+                        <button class="btn btn-sm btn-ghost" id="btnClearLogs">Clear View</button>
+                    </div>
+                    <div class="console-box" id="consoleOutput">
+                        <div class="console-line info">[SYSTEM] Console initialized. Ready for operations.</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -662,6 +662,25 @@
     .tg-comm-track{width:100%;height:5px;border-radius:100px;background:rgba(255,255,255,.06);overflow:hidden}
     .tg-comm-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,#0284c7,#38bdf8);transition:width .4s ease}
 
+    /* ── 𝕏 Twitter Growth & Commenting Engine ─────────────────── */
+    .x-hero-banner{background:linear-gradient(135deg,rgba(29,155,240,.12),rgba(124,58,237,.14));border:1px solid rgba(29,155,240,.3);border-radius:18px;padding:22px;margin-bottom:1.5rem;display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between}
+    .x-funnel-step{display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.08);padding:5px 12px;border-radius:8px;font-size:.74rem;color:var(--text2)}
+    .x-funnel-arrow{color:var(--blue-l);font-weight:900;font-size:.85rem}
+    .x-console{background:#05070c;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-family:'Consolas','Courier New',monospace;font-size:.76rem;line-height:1.55;height:240px;overflow-y:auto;color:#cbd5e1}
+    .x-log-row{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+    .x-log-time{color:var(--text3);flex-shrink:0}
+    .x-log-tag{font-weight:700;padding:0 5px;border-radius:4px;font-size:.68rem;flex-shrink:0}
+    .x-log-tag.INFO{background:rgba(59,130,246,.2);color:#60a5fa}
+    .x-log-tag.SUCCESS{background:rgba(34,197,94,.2);color:#4ade80}
+    .x-log-tag.WARN{background:rgba(245,158,11,.2);color:#fbbf24}
+    .x-log-tag.ERROR{background:rgba(239,68,68,.2);color:#f87171}
+    .x-form-group{margin-bottom:14px}
+    .x-form-label{display:block;font-size:.75rem;font-weight:700;color:var(--text2);margin-bottom:5px;letter-spacing:.02em}
+    .x-input{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:8px 12px;color:var(--text);font-size:.82rem;font-family:inherit;transition:border-color .2s}
+    .x-input:focus{outline:none;border-color:#1d9bf0;box-shadow:0 0 10px rgba(29,155,240,.25)}
+    .x-subtab{padding:6px 16px;border-radius:8px;font-size:.78rem;font-weight:600;cursor:pointer;background:transparent;color:var(--text3);border:1px solid transparent;transition:all .2s}
+    .x-subtab.on{background:rgba(29,155,240,.15);color:#38bdf8;border-color:rgba(29,155,240,.35)}
+
     /* ── Responsive ──────────────────────────────────────────────── */
     @media(max-width:1100px){.grid,.cfg-grid,.cmp-grid{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}}
     @media(max-width:768px){.stats,.cfg-stats{grid-template-columns:repeat(2,1fr)}.user-cards{grid-template-columns:1fr}#header{padding:0 1rem}#main{padding:1rem 1rem 3rem}.tbl-head,.tbl-row,.tg-tbl-head,.tg-tbl-row{grid-template-columns:120px 1fr 100px}}
@@ -776,6 +795,8 @@
       <div class="tab"    id="tabUsers"           onclick="setTab('users')">👾 Discord Members</div>
       <div class="tab"    id="tabTelegram"        onclick="setTab('telegram')">✈️ Telegram Audience <span class="pill" id="tgTabPill" style="margin-left:5px;background:rgba(56,189,248,.18);color:#38bdf8;border-color:rgba(56,189,248,.35);padding:1px 7px;font-size:11px">33.1k</span></div>
       <div class="tab"    id="tabCampaign"        onclick="setTab('campaign')">📢 Mass DM Broadcast</div>
+      <div class="tab"    id="tabEmails"          onclick="setTab('emails')">✉️ Captured Emails <span class="pill" id="emailsTabPill" style="margin-left:5px;background:rgba(34,197,94,.18);color:#4ade80;border-color:rgba(34,197,94,.35);padding:1px 7px;font-size:11px">0</span></div>
+      <div class="tab"    id="tabXGrowth"         onclick="setTab('xgrowth')">𝕏 Twitter Growth <span class="pill" id="xTabPill" style="margin-left:5px;background:rgba(29,155,240,.18);color:#38bdf8;border-color:rgba(29,155,240,.35);padding:1px 7px;font-size:11px">Idle</span></div>
     </div>
 
     <!-- ── OVERVIEW TAB ─────────────────────────────────────── -->
@@ -962,7 +983,7 @@
         <div class="card-head">
           <div>
             <span class="card-title">👾 Discord Server Members Directory</span>
-            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Indexed exclusively from joined Discord servers (MongoDB Atlas)</div>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Indexed exclusively from joined Discord servers (Turso Cloud)</div>
           </div>
           <span class="pill" id="userPill">0 users</span>
         </div>
@@ -1030,6 +1051,19 @@
           </div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:1.1rem">
             
+            <!-- 1-Tap OAuth2 Invite Link Card -->
+            <div style="background:linear-gradient(135deg,rgba(124,58,237,.14),rgba(37,99,235,.14));border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:.82rem;font-weight:700;color:var(--purple-l)">⚡ 1-Tap OAuth2 Authorize & Email Capture</span>
+                <span class="pill" style="color:var(--green-l);border-color:rgba(74,222,128,.35)">Ready</span>
+              </div>
+              <div style="font-size:.74rem;color:var(--text2);line-height:1.4">Share this link with your friends. When they tap <strong>Authorize</strong>, Discord instantly captures their verified email and registers them in your database:</div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="text" readonly id="oauth2LinkInput" value="http://localhost:8080/oauth2/authorize" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:.78rem;color:#60a5fa;font-family:monospace">
+                <button type="button" class="btn-secondary" onclick="navigator.clipboard.writeText($('oauth2LinkInput').value);this.textContent='Copied!';setTimeout(()=>this.textContent='📋 Copy', 2000)" style="padding:7px 12px;font-size:.75rem">📋 Copy</button>
+              </div>
+            </div>
+
             <!-- Target Server Selection -->
             <div class="form-group">
               <label class="form-label" for="cmpTargetServer">Target Server</label>
@@ -1064,6 +1098,8 @@
                 <button type="button" class="btn-var" onclick="insertCmpVar('{display_name}')">+ {display_name}</button>
                 <button type="button" class="btn-var" onclick="insertCmpVar('{username}')">+ {username}</button>
                 <button type="button" class="btn-var" onclick="insertCmpVar('{server_name}')">+ {server_name}</button>
+                <button type="button" class="btn-var" onclick="insertCmpVar('http://localhost:8080/oauth2/authorize')" style="color:var(--blue-l);border-color:rgba(96,165,250,.35)">⚡ + OAuth2 Link</button>
+                <button type="button" class="btn-var" onclick="insertCmpVar('https://discord.gg/4av5x7Faa3')" style="color:var(--green-l);border-color:rgba(74,222,128,.35)">🔗 + Server Invite</button>
               </div>
             </div>
 
@@ -1091,6 +1127,13 @@
                 <option value="balanced">⚡ Balanced (10-20s delay)</option>
                 <option value="stealth">🐢 Stealth (60-120s slow human pace)</option>
               </select>
+            </div>
+
+            <!-- Test / Batch Limit -->
+            <div class="form-group">
+              <label class="form-label" for="cmpTargetLimit">Batch / Test Limit (Optional)</label>
+              <input type="number" class="form-input" id="cmpTargetLimit" placeholder="e.g. 3 or 5 for testing (leave empty for full cohort)" min="1" max="10000" style="background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:8px 12px;color:#fff;width:100%;font-size:.82rem">
+              <div style="font-size:.72rem;color:var(--text3);margin-top:4px">💡 Recommended: Set to 3–5 targets for initial testing on your server.</div>
             </div>
 
             <div class="form-msg" id="cmpFormMsg"></div>
@@ -1305,6 +1348,350 @@
               </div>
               <button class="usr-page-btn" id="btnTgNext" type="button" onclick="goToTgPage(tgPage + 1)">Next ›</button>
               <button class="usr-page-btn" id="btnTgLast" type="button" onclick="goToTgPage(tgTotalPages)" title="Last Page">»</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CAPTURED EMAILS TAB ─────────────────────────────── -->
+    <div id="tabPanelEmails" style="display:none">
+      <!-- Top banner / actions -->
+      <div style="background:linear-gradient(135deg,rgba(124,58,237,.15),rgba(37,99,235,.15));border:1px solid rgba(124,58,237,.35);border-radius:18px;padding:20px;margin-bottom:1.5rem;display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between">
+        <div style="max-width:550px">
+          <div style="font-size:1.15rem;font-weight:800;color:#f8fafc;margin-bottom:6px">⚡ 1-Tap Discord Member Verification Flow</div>
+          <div style="font-size:.82rem;color:var(--text2);line-height:1.5">
+            Share your channel invite link with friends. When they enter <code style="background:rgba(0,0,0,.4);padding:2px 6px;border-radius:4px;color:#a78bfa">#general</code>, they see the Verification Gate and tap <strong>Authorize with Discord</strong>. Their verified email is immediately captured and registered in Turso database.
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button type="button" class="btn-primary" onclick="postVerificationGateToChannel()" id="btnPostGate" style="padding:10px 18px;font-size:.85rem">
+            📌 Post/Refresh Gate in #general
+          </button>
+          <button type="button" class="btn-secondary" onclick="exportEmailsCsv()" style="padding:10px 18px;font-size:.85rem">
+            📥 Export Emails CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- Links row -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:16px;margin-bottom:1.5rem">
+        <div class="card" style="padding:16px">
+          <div style="font-size:.82rem;font-weight:700;color:var(--green-l);margin-bottom:6px">🔗 Step 1: Channel Invite Link (For Friends)</div>
+          <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">Share this link directly with friends to invite them to #general:</div>
+          <div style="display:flex;gap:8px">
+            <input type="text" readonly id="emailInviteInput" value="https://discord.gg/4av5x7Faa3" style="flex:1;background:rgba(0,0,0,.45);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:.8rem;color:#4ade80;font-family:monospace">
+            <button type="button" class="btn-secondary" onclick="navigator.clipboard.writeText($('emailInviteInput').value);this.textContent='Copied!';setTimeout(()=>this.textContent='📋 Copy', 2000)" style="padding:8px 14px;font-size:.8rem">📋 Copy</button>
+          </div>
+        </div>
+        <div class="card" style="padding:16px">
+          <div style="font-size:.82rem;font-weight:700;color:var(--purple-l);margin-bottom:6px">⚡ Step 2: 1-Tap OAuth2 Direct Authorize Link</div>
+          <div style="font-size:.75rem;color:var(--text3);margin-bottom:8px">Official Discord consent screen (identify, email, guilds.join):</div>
+          <div style="display:flex;gap:8px">
+            <input type="text" readonly id="emailOauthInput" value="http://localhost:8080/oauth2/authorize" style="flex:1;background:rgba(0,0,0,.45);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:.8rem;color:#60a5fa;font-family:monospace">
+            <button type="button" class="btn-secondary" onclick="navigator.clipboard.writeText($('emailOauthInput').value);this.textContent='Copied!';setTimeout(()=>this.textContent='📋 Copy', 2000)" style="padding:8px 14px;font-size:.8rem">📋 Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats row -->
+      <div class="stats" style="margin-bottom:1.5rem">
+        <div class="stat c-all"><div class="stat-ico">✉️</div><div class="stat-val" id="emTotal">0</div><div class="stat-lbl">Total Extracted Emails</div></div>
+        <div class="stat c-done"><div class="stat-ico">⚡</div><div class="stat-val" id="emOAuth">0</div><div class="stat-lbl">Discord OAuth2 Verified</div></div>
+        <div class="stat c-urg"><div class="stat-ico">💬</div><div class="stat-val" id="emChat">0</div><div class="stat-lbl">Testing Server Chat / DMs</div></div>
+      </div>
+
+      <!-- Emails Table Card -->
+      <div class="card wide-card">
+        <div class="card-head">
+          <div>
+            <span class="card-title">📋 Captured Emails Directory</span>
+            <div style="font-size:.75rem;color:var(--text3);margin-top:2px">Real-time leads stored in Turso Cloud Database</div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <input type="text" class="srch" id="emailSearchInput" placeholder="Search emails or users..." oninput="filterExtractedEmails()" style="width:220px;padding:6px 12px;font-size:.8rem">
+            <span class="pill" id="emailCountPill">0 emails</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="extractedEmailsTable" style="width:100%;border-collapse:collapse;font-size:.82rem">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);color:var(--text3);text-align:left">
+                <th style="padding:12px 16px">Email Address</th>
+                <th style="padding:12px 16px">Discord User</th>
+                <th style="padding:12px 16px">Platform / Method</th>
+                <th style="padding:12px 16px">Source</th>
+                <th style="padding:12px 16px">Captured At</th>
+              </tr>
+            </thead>
+            <tbody id="extractedEmailsBody">
+              <tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text3)">Loading captured emails...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 𝕏 TWITTER GROWTH & COMMENTING TAB ──────────────────── -->
+    <div id="tabPanelXGrowth" style="display:none">
+      <!-- Omnichannel Funnel & Automation Control Hero Banner -->
+      <div class="x-hero-banner">
+        <div style="max-width:680px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:1.25rem;font-weight:900;color:#fff">𝕏 Autonomous Traffic & Traffic Conversion Engine</span>
+            <span class="status-chip idle" id="xEngineStateBadge">Idle</span>
+            <span class="pill" id="xBrowserActiveBadge" style="background:rgba(29,155,240,.15);color:#38bdf8;border-color:rgba(29,155,240,.35)">Browser: Standby</span>
+          </div>
+          <div style="font-size:.82rem;color:var(--text2);line-height:1.5;margin-bottom:12px">
+            Autonomous X commenting bot discovers high-engagement viral tweets matching your keywords, generates context-aware replies with your CTA link (<code style="background:rgba(0,0,0,.4);padding:2px 6px;border-radius:4px;color:#a78bfa">https://discord.gg/4av5x7Faa3</code>), and drives warm leads into your Discord community where verified emails are captured via 1-tap OAuth2.
+          </div>
+          <!-- Visual Funnel Flow -->
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+            <div class="x-funnel-step"><span>🔍</span> <strong>1. Scrape Hot X Tweets</strong></div>
+            <span class="x-funnel-arrow">➔</span>
+            <div class="x-funnel-step"><span>🤖</span> <strong>2. AI Contextual CTA Comment</strong></div>
+            <span class="x-funnel-arrow">➔</span>
+            <div class="x-funnel-step"><span>👾</span> <strong>3. Enter Discord #general</strong></div>
+            <span class="x-funnel-arrow">➔</span>
+            <div class="x-funnel-step"><span>✉️</span> <strong>4. 1-Tap OAuth2 Email Capture</strong></div>
+          </div>
+        </div>
+
+        <!-- Automation Controls -->
+        <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-end">
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button type="button" class="btn-primary" id="btnStartXEngine" onclick="startXAutomation()" style="padding:10px 20px;font-size:.85rem;background:linear-gradient(135deg,#1d9bf0,#2563eb);box-shadow:0 0 20px rgba(29,155,240,.35)">
+              ▶️ Start Autonomous Growth
+            </button>
+            <button type="button" class="btn-secondary" id="btnStopXEngine" onclick="stopXAutomation()" style="padding:10px 18px;font-size:.85rem;border-color:rgba(239,68,68,.3);color:#f87171" disabled>
+              ⏹️ Stop Engine
+            </button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn-secondary" onclick="openXLoginHelper()" style="padding:7px 14px;font-size:.78rem">
+              🌐 Open Visible X Login
+            </button>
+            <button type="button" class="btn-secondary" onclick="refreshXDashboard()" style="padding:7px 14px;font-size:.78rem">
+              🔄 Refresh Data
+            </button>
+          </div>
+          <div style="font-size:.72rem;color:var(--text3);text-align:right" id="xActivityIndicator">
+            Activity: Idle
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats Grid -->
+      <div class="stats" style="margin-bottom:1.5rem">
+        <div class="stat c-all">
+          <div class="stat-ico">🔍</div>
+          <div class="stat-val" id="xStatScanned">0</div>
+          <div class="stat-lbl">Scanned Tweets in DB</div>
+        </div>
+        <div class="stat c-done">
+          <div class="stat-ico">💬</div>
+          <div class="stat-val" id="xStatPosted">0</div>
+          <div class="stat-lbl" id="xStatPostedLbl">Comments Posted (Today)</div>
+        </div>
+        <div class="stat c-biz">
+          <div class="stat-ico">⚡</div>
+          <div class="stat-val" id="xStatLiveDry" style="font-size:1.6rem">0 / 0</div>
+          <div class="stat-lbl">Live Comments / Dry Run</div>
+        </div>
+        <div class="stat c-urg">
+          <div class="stat-ico">🛡️</div>
+          <div class="stat-val" id="xStatFailed">0</div>
+          <div class="stat-lbl">Skipped / Restricted Users</div>
+        </div>
+      </div>
+
+      <!-- Main Workspace Grid (Split View) -->
+      <div class="cfg-grid" style="grid-template-columns: 1fr 400px; gap: 1.5rem; margin-bottom: 2rem">
+        <!-- Left: Operations, Live Logs & Feeds -->
+        <div style="display:flex;flex-direction:column;gap:1.5rem">
+          <!-- Live Activity Log Terminal -->
+          <div class="card">
+            <div class="card-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="card-title">🖥️ Real-time Autonomous Engine Activity</span>
+                <span class="pill" id="xLogCountPill">0 logs</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <label style="font-size:.74rem;color:var(--text3);display:flex;align-items:center;gap:6px;cursor:pointer">
+                  <input type="checkbox" id="xLogAutoScroll" checked> Auto-scroll
+                </label>
+                <button type="button" class="btn-secondary" onclick="loadXLogs()" style="padding:4px 10px;font-size:.72rem">🔄 Refresh Logs</button>
+              </div>
+            </div>
+            <div style="padding:14px">
+              <div class="x-console" id="xLogsConsole">
+                <div class="x-log-row"><span class="x-log-time">--:--:--</span><span class="x-log-tag INFO">INFO</span><span>Waiting for engine start...</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Feed & Audit History Card with Tabs -->
+          <div class="card">
+            <div class="card-head">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span class="card-title">📊 Feeds & Audit Trail</span>
+                <div style="display:flex;gap:4px;background:var(--bg2);padding:3px;border-radius:10px;border:1px solid var(--border)">
+                  <button type="button" class="x-subtab on" id="subtabXComments" onclick="switchXSubtab('comments')">💬 Posted Comments Audit</button>
+                  <button type="button" class="x-subtab" id="subtabXPosts" onclick="switchXSubtab('posts')">🔍 Scanned Tweets</button>
+                </div>
+              </div>
+              <input type="text" class="srch" id="xFeedSearchInput" placeholder="Filter tweets or authors..." oninput="filterXFeed()" style="width:200px;padding:6px 12px;font-size:.78rem">
+            </div>
+
+            <!-- Posted Comments Table View -->
+            <div id="xCommentsTableView" style="overflow-x:auto">
+              <table class="data-table" style="width:100%;border-collapse:collapse;font-size:.82rem">
+                <thead>
+                  <tr style="border-bottom:1px solid var(--border);color:var(--text3);text-align:left">
+                    <th style="padding:12px 16px">Target Author</th>
+                    <th style="padding:12px 16px">Generated AI Comment & CTA</th>
+                    <th style="padding:12px 16px">Matched Keyword</th>
+                    <th style="padding:12px 16px">Mode</th>
+                    <th style="padding:12px 16px">Posted At</th>
+                    <th style="padding:12px 16px;text-align:right">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="xCommentsBody">
+                  <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Loading posted comments...</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Scanned Tweets Table View -->
+            <div id="xPostsTableView" style="overflow-x:auto;display:none">
+              <table class="data-table" style="width:100%;border-collapse:collapse;font-size:.82rem">
+                <thead>
+                  <tr style="border-bottom:1px solid var(--border);color:var(--text3);text-align:left">
+                    <th style="padding:12px 16px">Author</th>
+                    <th style="padding:12px 16px">Original Tweet Content</th>
+                    <th style="padding:12px 16px">Keyword</th>
+                    <th style="padding:12px 16px">Status</th>
+                    <th style="padding:12px 16px">Discovered At</th>
+                    <th style="padding:12px 16px;text-align:right">Link</th>
+                  </tr>
+                </thead>
+                <tbody id="xScannedPostsBody">
+                  <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Loading scanned tweets...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Campaign Settings & Comment Sandbox -->
+        <div style="display:flex;flex-direction:column;gap:1.5rem">
+          <!-- Campaign Config Card -->
+          <div class="card" style="padding:18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:12px">
+              <div>
+                <div style="font-size:.95rem;font-weight:800;color:#fff">⚙️ Growth Strategy Settings</div>
+                <div style="font-size:.72rem;color:var(--text3)">Synced with .env & runtime config</div>
+              </div>
+              <button type="button" class="btn-primary" onclick="saveXConfig()" id="btnSaveXConfig" style="padding:6px 14px;font-size:.78rem">💾 Save Config</button>
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Brand / Project Name</label>
+              <input type="text" class="x-input" id="xCfgCompanyName" placeholder="e.g. BR Axis">
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">One-Liner / Value Proposition</label>
+              <input type="text" class="x-input" id="xCfgCompanyOneLiner" placeholder="e.g. Next-gen crypto analytics & alpha hub">
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Call To Action (CTA) Text</label>
+              <textarea class="x-input" id="xCfgCompanyCta" rows="2" style="resize:vertical" placeholder="e.g. Join our free Discord community for alpha:"></textarea>
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Landing / Discord Invite URL</label>
+              <input type="text" class="x-input" id="xCfgCompanyUrl" placeholder="https://discord.gg/4av5x7Faa3">
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Target Keywords (Comma Separated)</label>
+              <textarea class="x-input" id="xCfgKeywords" rows="2" style="resize:vertical" placeholder="crypto, solana, ai agents, web3, defi"></textarea>
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Negative Filter Keywords (Anti-spam)</label>
+              <input type="text" class="x-input" id="xCfgNegKeywords" placeholder="airdrop scam, giveaway, dm me, pump, hack">
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" class="x-form-group">
+              <div>
+                <label class="x-form-label">Daily Limit</label>
+                <input type="number" class="x-input" id="xCfgDailyLimit" min="1" max="100" value="30">
+              </div>
+              <div>
+                <label class="x-form-label">Delay (Min - Max s)</label>
+                <div style="display:flex;gap:4px;align-items:center">
+                  <input type="number" class="x-input" id="xCfgMinDelay" placeholder="180" style="padding:8px 6px">
+                  <span style="color:var(--text3)">-</span>
+                  <input type="number" class="x-input" id="xCfgMaxDelay" placeholder="420" style="padding:8px 6px">
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;padding:12px;background:rgba(0,0,0,.3);border-radius:10px;border:1px solid var(--border);margin-top:6px">
+              <label style="display:flex;align-items:center;gap:8px;font-size:.78rem;cursor:pointer">
+                <input type="checkbox" id="xCfgDryRun">
+                <span><strong>Dry Run Mode</strong> (Simulate without posting live)</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:.78rem;cursor:pointer">
+                <input type="checkbox" id="xCfgAttachImage">
+                <span><strong>Attach Media Image</strong> with comments</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:.78rem;cursor:pointer">
+                <input type="checkbox" id="xCfgHeadless">
+                <span><strong>Headless Browser Mode</strong> (Hidden background execution)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- AI Comment Simulator / Sandbox Card -->
+          <div class="card" style="padding:18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <div style="font-size:.9rem;font-weight:800;color:var(--purple-l)">🧪 Interactive Comment Sandbox</div>
+              <span class="pill" id="xAiModeBadge">Template Engine</span>
+            </div>
+            <div style="font-size:.74rem;color:var(--text3);margin-bottom:12px">
+              Preview how the AI crafts an organic value-add reply with your CTA for any tweet.
+            </div>
+
+            <div class="x-form-group">
+              <label class="x-form-label">Sample Tweet Text</label>
+              <textarea class="x-input" id="xTestTweetText" rows="3" placeholder="What are the best AI agents you are using in Web3 right now?"></textarea>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px" class="x-form-group">
+              <div>
+                <label class="x-form-label">Author Handle</label>
+                <input type="text" class="x-input" id="xTestAuthor" value="crypto_whale">
+              </div>
+              <div>
+                <label class="x-form-label">Keyword Match</label>
+                <input type="text" class="x-input" id="xTestKeyword" value="ai agents">
+              </div>
+            </div>
+
+            <button type="button" class="btn-primary" onclick="testGenerateXComment()" id="btnTestXGenerate" style="width:100%;padding:9px;font-size:.8rem;margin-bottom:12px">
+              ✨ Simulate Generated Comment
+            </button>
+
+            <div id="xTestResultBox" style="display:none;background:rgba(0,0,0,.45);border:1px solid var(--border);border-radius:10px;padding:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span style="font-size:.72rem;font-weight:700;color:var(--green-l)">Generated Output:</span>
+                <span style="font-size:.7rem;font-family:monospace;color:var(--text3)" id="xTestCharCount">0 / 280 chars</span>
+              </div>
+              <div style="font-size:.8rem;color:#f1f5f9;line-height:1.5;white-space:pre-wrap" id="xTestResultText"></div>
             </div>
           </div>
         </div>
@@ -1711,15 +2098,21 @@ function setTab(t){
   $('tabUsers').classList.toggle('on', t==='users');
   $('tabTelegram').classList.toggle('on', t==='telegram');
   $('tabCampaign').classList.toggle('on', t==='campaign');
+  if ($('tabEmails')) $('tabEmails').classList.toggle('on', t==='emails');
+  if ($('tabXGrowth')) $('tabXGrowth').classList.toggle('on', t==='xgrowth');
   $('tabPanelOverview').style.display        = t==='overview'       ? '' : 'none';
   $('tabPanelConfigurations').style.display  = t==='configurations' ? '' : 'none';
   $('tabPanelUsers').style.display           = t==='users'          ? '' : 'none';
   $('tabPanelTelegram').style.display        = t==='telegram'       ? '' : 'none';
   $('tabPanelCampaign').style.display        = t==='campaign'       ? '' : 'none';
+  if ($('tabPanelEmails')) $('tabPanelEmails').style.display = t==='emails' ? '' : 'none';
+  if ($('tabPanelXGrowth')) $('tabPanelXGrowth').style.display = t==='xgrowth' ? '' : 'none';
   if(t==='configurations') loadGuilds();
   if(t==='users') { loadGuilds(); loadUsers(); loadServerCoverage(); }
   if(t==='telegram') { loadTelegramStats(); loadTelegramChannels(); loadTelegramUsers(); }
   if(t==='campaign') { loadCampaignServers(); updateCampaignAudienceCount(); pollCampaignStatus(); }
+  if(t==='emails') { loadExtractedEmails(); }
+  if(t==='xgrowth') { loadXStatus(); loadXPosts(); loadXComments(); loadXLogs(); }
 }
 
 /* ── Status pill ─────────────────────────────────────────────── */
@@ -2485,6 +2878,7 @@ async function refresh(){
     renderConfigTab(configs);
     renderUser(cache);
     syncTelegramBadge();
+    loadExtractedEmails();
 
     dot.classList.remove('spin');
     $('syncTxt').textContent=`Updated ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;
@@ -2556,7 +2950,7 @@ async function loadServerCoverage(){
     if(pill && data.summary){
       const totalOff = Number(data.summary.total_official || 0).toLocaleString();
       const totalIdx = Number(data.summary.total_indexed || 0).toLocaleString();
-      const totalPct = data.summary.coverage_percent || 0;
+      const totalPct = Number(data.summary.coverage_percent || 0).toFixed(2);
       pill.textContent = `Overall: ${totalIdx} / ${totalOff} Members (${totalPct}% Synced)`;
     }
 
@@ -2944,6 +3338,8 @@ async function startMassCampaign(){
   const userType = $('cmpTargetType')?.value || 'human';
   const message = ($('cmpMessageText')?.value || '').trim();
   const pacing = $('cmpPacingMode')?.value || 'safe';
+  const limitVal = $('cmpTargetLimit')?.value;
+  const limit = limitVal ? parseInt(limitVal, 10) : null;
 
   if(!message && !cmpImageBase64){
     msgEl.className = 'form-msg err';
@@ -2966,7 +3362,8 @@ async function startMassCampaign(){
         message: message,
         image_data: cmpImageBase64,
         image_filename: cmpImageFileName,
-        delay_mode: pacing
+        delay_mode: pacing,
+        limit: limit || null
       })
     });
     const data = await res.json();
@@ -3116,9 +3513,9 @@ async function loadTelegramStats(){
     if($('tgStatTotal')) $('tgStatTotal').textContent = total.toLocaleString();
     if($('tgStatWithUsername')) $('tgStatWithUsername').textContent = withUsername.toLocaleString();
     if($('tgStatChannels')) $('tgStatChannels').textContent = channels.toLocaleString();
-    const backend = data.storage_backend || 'MongoDB Atlas';
-    if($('tgStatStorage')) $('tgStatStorage').textContent = backend.includes('MongoDB') ? 'MongoDB Atlas' : 'Local SQLite';
-    if($('tgStatStorageSub')) $('tgStatStorageSub').textContent = backend.includes('MongoDB') ? 'discord_agent_db.telegram_users' : 'Offline Backup';
+    const backend = data.storage_backend || 'Turso';
+    if($('tgStatStorage')) $('tgStatStorage').textContent = backend.includes('Turso') ? 'Turso libSQL' : (backend.includes('MongoDB') ? 'MongoDB Atlas' : 'Local SQLite');
+    if($('tgStatStorageSub')) $('tgStatStorageSub').textContent = backend.includes('Turso') ? 'turso.io (9 GB Edge Storage)' : (backend.includes('MongoDB') ? 'discord_agent_db.telegram_users' : 'Offline Backup');
     if($('tgTabPill')) $('tgTabPill').textContent = total > 1000 ? `${(total/1000).toFixed(1)}k` : String(total);
   }catch(err){
     console.error('Failed to load Telegram stats:', err);
@@ -3478,6 +3875,7 @@ window.addEventListener('load', async () => {
   else if (hash === 'discord' || hash === 'users') tab = 'users';
   else if (hash === 'configurations' || hash === 'configs') tab = 'configurations';
   else if (hash === 'campaign') tab = 'campaign';
+  else if (hash === 'emails' || hash === 'captured-emails') tab = 'emails';
   else if (hash === 'overview') tab = 'overview';
 
   setMode(mode);
@@ -3536,9 +3934,475 @@ window.addEventListener('load', async () => {
   });
   
   setInterval(() => {
-    if (authToken) refresh();
+    if (authToken) {
+      refresh();
+      loadExtractedEmails();
+      if (tab === 'xgrowth') {
+        loadXStatus();
+        loadXLogs();
+        loadXComments();
+      }
+    }
   }, REFRESH_MS);
+  if (authToken) {
+    loadXStatus();
+  }
 });
+
+/* ── Extracted Emails Management ────────────────────────────── */
+let allExtractedEmails = [];
+
+async function loadExtractedEmails() {
+  try {
+    if ($('emailOauthInput')) $('emailOauthInput').value = window.location.origin + '/oauth2/authorize';
+    const res = await fetch('/api/emails?limit=500');
+    if (!res.ok) return;
+    const data = await res.json();
+    allExtractedEmails = data.emails || [];
+    renderExtractedEmails(allExtractedEmails);
+  } catch(err) {
+    console.error('Error loading extracted emails:', err);
+  }
+}
+
+function renderExtractedEmails(emails) {
+  const tbody = $('extractedEmailsBody');
+  if (!tbody) return;
+  const total = emails.length;
+  const oauthCount = emails.filter(e => (e.platform || '').includes('oauth')).length;
+  const chatCount = total - oauthCount;
+
+  if ($('emTotal')) $('emTotal').textContent = total;
+  if ($('emOAuth')) $('emOAuth').textContent = oauthCount;
+  if ($('emChat')) $('emChat').textContent = chatCount;
+  if ($('emailCountPill')) $('emailCountPill').textContent = `${total} emails`;
+  if ($('emailsTabPill')) $('emailsTabPill').textContent = total;
+
+  if (!emails || emails.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:36px;color:var(--text3)">No emails captured yet. Share your channel invite link to start capturing!</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = emails.map(item => {
+    const isOAuth = (item.platform || '').includes('oauth');
+    const badge = isOAuth
+      ? '<span class="pill" style="background:rgba(34,197,94,.15);color:#4ade80;border-color:rgba(34,197,94,.35)">⚡ Discord OAuth2</span>'
+      : `<span class="pill" style="background:rgba(96,165,250,.15);color:#60a5fa;border-color:rgba(96,165,250,.35)">${esc(item.platform || 'chat')}</span>`;
+    
+    const userDisplay = item.username ? `@${esc(item.username)}` : (item.full_name ? esc(item.full_name) : '—');
+    const timeStr = item.extracted_at ? new Date(item.extracted_at).toLocaleString() : '—';
+
+    return `
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.04);transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
+        <td style="padding:12px 16px;font-family:monospace;font-weight:700;color:#38bdf8">${esc(item.email)}</td>
+        <td style="padding:12px 16px;color:var(--text)">${userDisplay}</td>
+        <td style="padding:12px 16px">${badge}</td>
+        <td style="padding:12px 16px;color:var(--text3);font-size:.78rem">${esc(item.source || 'Testing Server')}</td>
+        <td style="padding:12px 16px;color:var(--text3);font-size:.78rem">${esc(timeStr)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterExtractedEmails() {
+  const query = ($('emailSearchInput')?.value || '').toLowerCase().trim();
+  if (!query) {
+    renderExtractedEmails(allExtractedEmails);
+    return;
+  }
+  const filtered = allExtractedEmails.filter(e => 
+    (e.email || '').toLowerCase().includes(query) ||
+    (e.username || '').toLowerCase().includes(query) ||
+    (e.full_name || '').toLowerCase().includes(query) ||
+    (e.source || '').toLowerCase().includes(query)
+  );
+  renderExtractedEmails(filtered);
+}
+
+async function postVerificationGateToChannel() {
+  const btn = $('btnPostGate');
+  if (btn) { btn.disabled = true; btn.textContent = 'Posting to #general...'; }
+  try {
+    const res = await fetch('/api/testing-server/post-gate?force=true', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      alert('✅ Verification Gate successfully posted and pinned in #general!');
+    } else {
+      alert('Notice: ' + (data.error || 'Check server logs'));
+    }
+  } catch(e) {
+    alert('Failed to connect: ' + e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📌 Post/Refresh Gate in #general'; }
+  }
+}
+
+function exportEmailsCsv() {
+  if (!allExtractedEmails || allExtractedEmails.length === 0) {
+    alert('No emails to export yet.');
+    return;
+  }
+  let csv = 'Email,Username,DisplayName,Platform,Source,ExtractedAt\n';
+  allExtractedEmails.forEach(e => {
+    csv += `"${(e.email||'').replace(/"/g, '""')}","${(e.username||'').replace(/"/g, '""')}","${(e.full_name||'').replace(/"/g, '""')}","${(e.platform||'').replace(/"/g, '""')}","${(e.source||'').replace(/"/g, '""')}","${(e.extracted_at||'').replace(/"/g, '""')}"\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `captured_emails_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── 𝕏 Twitter Growth & Commenting Engine Client ────────────── */
+let allXPosts = [];
+let allXComments = [];
+let activeXSubtab = 'comments';
+let isXConfigLoaded = false;
+
+async function loadXStatus() {
+  try {
+    const res = await fetch('/api/x/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.available) return;
+
+    const eng = data.engine || {};
+    const stats = data.stats || {};
+    const cfg = data.config || {};
+
+    // Badges & State
+    const isRunning = eng.state === 'running';
+    const stateBadge = $('xEngineStateBadge');
+    if (stateBadge) {
+      stateBadge.className = 'status-chip ' + (isRunning ? 'running' : (eng.state === 'paused' ? 'paused' : 'idle'));
+      stateBadge.textContent = isRunning ? 'Running' : (eng.state === 'paused' ? 'Paused' : 'Stopped');
+    }
+
+    const browserBadge = $('xBrowserActiveBadge');
+    if (browserBadge) {
+      browserBadge.textContent = eng.browser_active ? 'Browser: Active 🟢' : 'Browser: Standby';
+      browserBadge.style.color = eng.browser_active ? '#4ade80' : '#38bdf8';
+    }
+
+    const xTabPill = $('xTabPill');
+    if (xTabPill) {
+      xTabPill.textContent = isRunning ? 'Running 🟢' : 'Idle';
+      xTabPill.style.color = isRunning ? '#4ade80' : '#38bdf8';
+    }
+
+    const btnStart = $('btnStartXEngine');
+    const btnStop = $('btnStopXEngine');
+    if (btnStart) btnStart.disabled = isRunning;
+    if (btnStop) btnStop.disabled = !isRunning;
+
+    const actInd = $('xActivityIndicator');
+    if (actInd) actInd.textContent = 'Activity: ' + (eng.activity || 'Idle');
+
+    // Stats Tiles
+    if ($('xStatScanned')) $('xStatScanned').textContent = (stats.total_scanned || 0).toLocaleString();
+    if ($('xStatPosted')) $('xStatPosted').textContent = `${stats.comments_today || 0} / ${eng.daily_limit || cfg.daily_comment_limit || 30}`;
+    if ($('xStatLiveDry')) $('xStatLiveDry').textContent = `${stats.live_comments || 0} live / ${stats.dry_comments || 0} dry`;
+    if ($('xStatFailed')) $('xStatFailed').textContent = stats.failed_comments || 0;
+
+    // AI Mode badge in tester
+    const aiBadge = $('xAiModeBadge');
+    if (aiBadge) {
+      aiBadge.textContent = cfg.has_openai_key ? 'OpenAI GPT-4o-mini' : 'Template Engine';
+      aiBadge.style.color = cfg.has_openai_key ? '#a78bfa' : '#38bdf8';
+    }
+
+    // Populate config fields only once (or when not dirty)
+    if (!isXConfigLoaded && cfg) {
+      if ($('xCfgCompanyName')) $('xCfgCompanyName').value = cfg.company_name || '';
+      if ($('xCfgCompanyOneLiner')) $('xCfgCompanyOneLiner').value = cfg.company_one_liner || '';
+      if ($('xCfgCompanyCta')) $('xCfgCompanyCta').value = cfg.company_cta || '';
+      if ($('xCfgCompanyUrl')) $('xCfgCompanyUrl').value = cfg.company_url || '';
+      if ($('xCfgKeywords')) $('xCfgKeywords').value = cfg.target_keywords || '';
+      if ($('xCfgNegKeywords')) $('xCfgNegKeywords').value = cfg.negative_keywords || '';
+      if ($('xCfgDailyLimit')) $('xCfgDailyLimit').value = cfg.daily_comment_limit || 30;
+      if ($('xCfgMinDelay')) $('xCfgMinDelay').value = cfg.min_delay_seconds || 180;
+      if ($('xCfgMaxDelay')) $('xCfgMaxDelay').value = cfg.max_delay_seconds || 420;
+      if ($('xCfgDryRun')) $('xCfgDryRun').checked = Boolean(cfg.dry_run);
+      if ($('xCfgAttachImage')) $('xCfgAttachImage').checked = Boolean(cfg.attach_image);
+      if ($('xCfgHeadless')) $('xCfgHeadless').checked = Boolean(cfg.headless);
+      isXConfigLoaded = true;
+    }
+  } catch (err) {
+    console.error('Error loading X status:', err);
+  }
+}
+
+async function startXAutomation() {
+  const btn = $('btnStartXEngine');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting Engine...'; }
+  try {
+    const res = await fetch('/api/x/control/start', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'started' || data.status === 'already_running') {
+      await loadXStatus();
+      await loadXLogs();
+    } else {
+      alert('Notice: ' + (data.error || 'Failed to start engine.'));
+    }
+  } catch (e) {
+    alert('Failed to connect to engine: ' + e);
+  } finally {
+    if (btn) btn.textContent = '▶️ Start Autonomous Growth';
+    loadXStatus();
+  }
+}
+
+async function stopXAutomation() {
+  const btn = $('btnStopXEngine');
+  if (btn) { btn.disabled = true; btn.textContent = 'Stopping...'; }
+  try {
+    await fetch('/api/x/control/stop', { method: 'POST' });
+    await loadXStatus();
+    await loadXLogs();
+  } catch (e) {
+    alert('Failed to stop engine: ' + e);
+  } finally {
+    if (btn) btn.textContent = '⏹️ Stop Engine';
+    loadXStatus();
+  }
+}
+
+async function openXLoginHelper() {
+  try {
+    const res = await fetch('/api/x/browser/open-login', { method: 'POST' });
+    const data = await res.json();
+    alert(data.message || 'Visible login browser opened!');
+    loadXLogs();
+  } catch (e) {
+    alert('Error opening login window: ' + e);
+  }
+}
+
+async function refreshXDashboard() {
+  await Promise.all([
+    loadXStatus(),
+    loadXPosts(),
+    loadXComments(),
+    loadXLogs()
+  ]);
+}
+
+function switchXSubtab(tabName) {
+  activeXSubtab = tabName;
+  $('subtabXComments').classList.toggle('on', tabName === 'comments');
+  $('subtabXPosts').classList.toggle('on', tabName === 'posts');
+  $('xCommentsTableView').style.display = tabName === 'comments' ? '' : 'none';
+  $('xPostsTableView').style.display = tabName === 'posts' ? '' : 'none';
+}
+
+async function loadXPosts() {
+  try {
+    const res = await fetch('/api/x/posts?limit=60');
+    if (!res.ok) return;
+    const data = await res.json();
+    allXPosts = data.posts || [];
+    renderXPosts(allXPosts);
+  } catch (e) {
+    console.error('Error loading X posts:', e);
+  }
+}
+
+function renderXPosts(posts) {
+  const tbody = $('xScannedPostsBody');
+  if (!tbody) return;
+  if (!posts || posts.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">No tweets scanned yet. Start the engine to begin discovering tweets!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = posts.map(p => {
+    const author = p.author ? `@${esc(p.author)}` : '—';
+    const statusColor = p.status === 'commented' ? '#4ade80' : (p.status === 'skipped' ? '#f87171' : '#60a5fa');
+    const timeStr = p.discovered_at ? new Date(p.discovered_at).toLocaleTimeString() : '—';
+    const link = p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;font-weight:700">Open ↗</a>` : '—';
+    return `
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.04)">
+        <td style="padding:10px 14px;font-weight:700;color:var(--purple-l)">${author}</td>
+        <td style="padding:10px 14px;max-width:320px;white-space:normal;word-break:break-word;color:var(--text2);font-size:.78rem">${esc(p.content || '')}</td>
+        <td style="padding:10px 14px"><span class="pill" style="font-size:11px">${esc(p.matched_keyword || '')}</span></td>
+        <td style="padding:10px 14px"><span style="color:${statusColor};font-weight:700;font-size:.75rem">${esc(p.status || 'scanned')}</span></td>
+        <td style="padding:10px 14px;color:var(--text3);font-size:.75rem">${esc(timeStr)}</td>
+        <td style="padding:10px 14px;text-align:right">${link}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadXComments() {
+  try {
+    const res = await fetch('/api/x/comments?limit=60');
+    if (!res.ok) return;
+    const data = await res.json();
+    allXComments = data.comments || [];
+    renderXComments(allXComments);
+  } catch (e) {
+    console.error('Error loading X comments:', e);
+  }
+}
+
+function renderXComments(comments) {
+  const tbody = $('xCommentsBody');
+  if (!tbody) return;
+  if (!comments || comments.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">No comments posted yet. Start the engine to begin autonomous commenting!</td></tr>';
+    return;
+  }
+  tbody.innerHTML = comments.map(c => {
+    const author = c.author ? `@${esc(c.author)}` : '—';
+    const isLive = c.mode === 'live';
+    const modeBadge = isLive
+      ? '<span class="pill" style="background:rgba(34,197,94,.15);color:#4ade80;border-color:rgba(34,197,94,.35)">Live ✅</span>'
+      : '<span class="pill" style="background:rgba(245,158,11,.15);color:#fbbf24;border-color:rgba(245,158,11,.35)">Dry Run 🧪</span>';
+    const timeStr = c.posted_at ? new Date(c.posted_at).toLocaleTimeString() : '—';
+    const tweetUrl = c.tweet_url || (c.tweet_id ? `https://x.com/i/web/status/${c.tweet_id}` : null);
+    const link = tweetUrl ? `<a href="${esc(tweetUrl)}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;font-weight:700">View on 𝕏 ↗</a>` : '—';
+    return `
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.04)">
+        <td style="padding:10px 14px;font-weight:700;color:var(--purple-l)">${author}</td>
+        <td style="padding:10px 14px;max-width:340px;white-space:normal;word-break:break-word;color:var(--green-l);font-size:.78rem;line-height:1.4">${esc(c.reply_text || '')}</td>
+        <td style="padding:10px 14px"><span class="pill" style="font-size:11px">${esc(c.matched_keyword || 'auto')}</span></td>
+        <td style="padding:10px 14px">${modeBadge}</td>
+        <td style="padding:10px 14px;color:var(--text3);font-size:.75rem">${esc(timeStr)}</td>
+        <td style="padding:10px 14px;text-align:right">${link}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterXFeed() {
+  const query = ($('xFeedSearchInput')?.value || '').toLowerCase().trim();
+  if (activeXSubtab === 'comments') {
+    if (!query) { renderXComments(allXComments); return; }
+    const filtered = allXComments.filter(c =>
+      (c.author || '').toLowerCase().includes(query) ||
+      (c.reply_text || '').toLowerCase().includes(query) ||
+      (c.matched_keyword || '').toLowerCase().includes(query)
+    );
+    renderXComments(filtered);
+  } else {
+    if (!query) { renderXPosts(allXPosts); return; }
+    const filtered = allXPosts.filter(p =>
+      (p.author || '').toLowerCase().includes(query) ||
+      (p.content || '').toLowerCase().includes(query) ||
+      (p.matched_keyword || '').toLowerCase().includes(query)
+    );
+    renderXPosts(filtered);
+  }
+}
+
+async function loadXLogs() {
+  try {
+    const res = await fetch('/api/x/logs?limit=80');
+    if (!res.ok) return;
+    const data = await res.json();
+    renderXLogs(data.logs || []);
+  } catch (e) {
+    console.error('Error loading X logs:', e);
+  }
+}
+
+function renderXLogs(logs) {
+  const consoleEl = $('xLogsConsole');
+  if (!consoleEl) return;
+  if ($('xLogCountPill')) $('xLogCountPill').textContent = `${logs.length} logs`;
+  if (!logs || logs.length === 0) {
+    consoleEl.innerHTML = '<div class="x-log-row"><span class="x-log-time">--:--:--</span><span class="x-log-tag INFO">INFO</span><span>No logs recorded yet.</span></div>';
+    return;
+  }
+  consoleEl.innerHTML = logs.map(l => {
+    const tag = esc(l.level || 'INFO');
+    const timeStr = l.created_at ? new Date(l.created_at).toLocaleTimeString() : '00:00:00';
+    return `<div class="x-log-row"><span class="x-log-time">${esc(timeStr)}</span><span class="x-log-tag ${tag}">${tag}</span><span>${esc(l.message || '')}</span></div>`;
+  }).join('');
+
+  if ($('xLogAutoScroll')?.checked) {
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+}
+
+async function saveXConfig() {
+  const btn = $('btnSaveXConfig');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  const payload = {
+    company_name: $('xCfgCompanyName')?.value || '',
+    company_one_liner: $('xCfgCompanyOneLiner')?.value || '',
+    company_cta: $('xCfgCompanyCta')?.value || '',
+    company_url: $('xCfgCompanyUrl')?.value || '',
+    target_keywords: $('xCfgKeywords')?.value || '',
+    negative_keywords: $('xCfgNegKeywords')?.value || '',
+    daily_comment_limit: parseInt($('xCfgDailyLimit')?.value || '30', 10),
+    min_delay_seconds: parseInt($('xCfgMinDelay')?.value || '180', 10),
+    max_delay_seconds: parseInt($('xCfgMaxDelay')?.value || '420', 10),
+    dry_run: Boolean($('xCfgDryRun')?.checked),
+    attach_image: Boolean($('xCfgAttachImage')?.checked),
+    headless: Boolean($('xCfgHeadless')?.checked),
+  };
+  try {
+    const res = await fetch('/api/x/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.status === 'updated') {
+      if (btn) btn.textContent = '✅ Saved!';
+      setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = '💾 Save Config'; } }, 2000);
+      loadXLogs();
+    } else {
+      alert('Error: ' + (data.error || 'Failed to update config.'));
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Save Config'; }
+    }
+  } catch (e) {
+    alert('Failed to save config: ' + e);
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save Config'; }
+  }
+}
+
+async function testGenerateXComment() {
+  const btn = $('btnTestXGenerate');
+  const tweetText = $('xTestTweetText')?.value || '';
+  const author = $('xTestAuthor')?.value || 'crypto_enthusiast';
+  const keyword = $('xTestKeyword')?.value || 'crypto';
+
+  if (!tweetText.trim()) {
+    alert('Please enter a sample tweet text to simulate.');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = '✨ Generating Comment...'; }
+  try {
+    const res = await fetch('/api/x/test/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tweet_text: tweetText, author, keyword })
+    });
+    const data = await res.json();
+    if (data.reply) {
+      $('xTestResultBox').style.display = 'block';
+      $('xTestResultText').textContent = data.reply;
+      const countEl = $('xTestCharCount');
+      if (countEl) {
+        countEl.textContent = `${data.length} / 280 chars`;
+        countEl.style.color = data.length > 280 ? '#f87171' : 'var(--text3)';
+      }
+      if ($('xAiModeBadge')) {
+        $('xAiModeBadge').textContent = data.mode === 'ai' ? 'OpenAI GPT' : 'Template Engine';
+      }
+    } else {
+      alert('Error generating reply: ' + (data.error || 'Empty reply'));
+    }
+  } catch (e) {
+    alert('Simulation failed: ' + e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Simulate Generated Comment'; }
+  }
+}
 </script>
 </body>
 </html>

@@ -1,0 +1,49 @@
+{
+  "template_1_three_phones.jpg": {
+    "name": "Template 1 - Three Phones Header & 2-Col Bottom Table",
+    "archetype": "bottom_2col_grid",
+    "description": "3 mobile phone mocks on top with a 2-column key events grid on the bottom.",
+    "date_badge": {"x1": 572, "y1": 772, "x2": 785, "y2": 806, "style": "red_pill"},
+    "table_left": {"x1": 35, "y1": 818, "x2": 395, "y2": 935},
+    "table_right": {"x1": 425, "y1": 818, "x2": 785, "y2": 935},
+    "row_height": 23,
+    "max_events": 10
+  },
+  "template_2_paper_notepad.jpg": {
+    "name": "Template 2 - Paper Notepad & Top Calendar",
+    "archetype": "paper_notepad",
+    "description": "Ripped ruled paper style with top right desk calendar pad.",
+    "calendar_pad": {"x": 640, "y": 140, "w": 95, "h": 85},
+    "table": {"x1": 50, "y1": 290, "x2": 770, "y2": 615},
+    "row_height": 39,
+    "max_events": 8
+  },
+  "template_3_globe_single_phone.jpg": {
+    "name": "Template 3 - Glowing 3D Globe & Single Phone",
+    "archetype": "dark_card_5row",
+    "description": "Glowing blue key events box with 3D globe and phone preview.",
+    "date_badge": {"x1": 572, "y1": 512, "x2": 790, "y2": 552, "style": "cyan_outline"},
+    "table": {"x1": 32, "y1": 565, "x2": 785, "y2": 830},
+    "row_height": 52,
+    "max_events": 5
+  },
+  "template_4_calendar_chart.jpg": {
+    "name": "Template 4 - Calendar Header & 3 Phone Charts",
+    "archetype": "dark_card_5row",
+    "description": "Notepad date badge, top events table, and 3 phones showing charts below.",
+    "calendar_pad": {"x1": 680, "y1": 140, "x2": 775, "y2": 205},
+    "date_badge": {"x1": 620, "y1": 252, "x2": 785, "y2": 286, "style": "dark_box"},
+    "table": {"x1": 32, "y1": 295, "x2": 785, "y2": 550},
+    "row_height": 50,
+    "max_events": 5
+  },
+  "template_5_split_events_phone.jpg": {
+    "name": "Template 5 - Split Left Events & Right Phone",
+    "archetype": "split_events_phone",
+    "description": "Left half 5-row key events card with right half large phone mockup.",
+    "date_badge": {"x1": 360, "y1": 308, "x2": 505, "y2": 344, "style": "cyan_outline"},
+    "table": {"x1": 30, "y1": 355, "x2": 505, "y2": 680},
+    "row_height": 64,
+    "max_events": 5
+  }
+}

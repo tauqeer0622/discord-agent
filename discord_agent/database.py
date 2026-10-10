@@ -32,6 +32,11 @@ ADMIN_ROLE_REGEX = re.compile(
 )
 
 
+def is_turso_active() -> bool:
+    """Return True if Turso libSQL is configured or requested via USE_TURSO."""
+    return bool(os.getenv("TURSO_DATABASE_URL") or os.getenv("USE_TURSO", "").lower() == "true")
+
+
 def get_database():
     global _client, _database
 
@@ -671,11 +676,16 @@ def upsert_user(user_data):
 
 
 def bulk_upsert_users(users_list):
-    """Bulk upsert thousands/millions of users into MongoDB with high throughput.
+    """Bulk upsert thousands/millions of users into MongoDB or Turso with high throughput.
     Slim schema — only essential DM fields stored to maximise cluster capacity.
     """
     if not users_list:
         return 0
+
+    if is_turso_active():
+        import turso_database
+        return turso_database.bulk_upsert_users(users_list)
+
     operations = []
 
     for u in users_list:
@@ -754,7 +764,17 @@ def _get_cached_user_stats(collection, fallback_total):
 
 
 def get_paginated_users(page=1, limit=50, search=None, server=None, user_type=None, presence=None):
-    """Retrieve paginated, deduplicated users directly from MongoDB with indexed filtering."""
+    """Retrieve paginated, deduplicated users directly from Turso or MongoDB."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_paginated_users(
+            server=server,
+            search=search,
+            user_type=user_type,
+            page=page,
+            limit=limit,
+        )
+
     collection = get_collection("discord_users")
     try:
         page = max(1, int(page))
@@ -867,6 +887,10 @@ _user_servers_cache = {"data": None, "expires_at": 0.0}
 
 def get_all_user_servers():
     """Return distinct server names where indexed users exist (cached 30s)."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_all_user_servers()
+
     now = time.time()
     if _user_servers_cache["data"] is not None and now < _user_servers_cache["expires_at"]:
         return _user_servers_cache["data"]
@@ -877,8 +901,12 @@ def get_all_user_servers():
     return result
 
 
-def get_campaign_target_users(server=None, user_type="human"):
+def get_campaign_target_users(server=None, user_type="human", limit=100):
     """Fetch all matching target users for a mass DM campaign."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_campaign_target_users(server=server, user_type=user_type, limit=limit)
+
     collection = get_collection("discord_users")
     query = {}
     if server and server != "all":
@@ -900,12 +928,18 @@ def get_campaign_target_users(server=None, user_type="human"):
         "server_name": 1,
         "is_bot": 1,
     })
+    if limit:
+        cursor = cursor.limit(limit)
 
     return list(cursor)
 
 
 def get_campaign_target_count(server=None, user_type="human"):
     """Get the total count of target members for a preview."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_campaign_target_count(server=server, user_type=user_type)
+
     collection = get_collection("discord_users")
     query = {}
     if server and server != "all":
@@ -922,7 +956,11 @@ def get_campaign_target_count(server=None, user_type="human"):
 
 
 def save_campaign_record(campaign_data):
-    """Save or update campaign state in MongoDB."""
+    """Save or update campaign state in Turso or MongoDB."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.save_campaign_record(campaign_data)
+
     collection = get_collection("dm_campaigns")
     cid = campaign_data.get("id")
     if not cid:
@@ -932,6 +970,10 @@ def save_campaign_record(campaign_data):
 
 def get_latest_campaign_record():
     """Fetch the latest campaign state."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_latest_campaign_record()
+
     collection = get_collection("dm_campaigns")
     doc = collection.find_one(sort=[("updated_at", -1)])
     if doc:
@@ -944,7 +986,11 @@ _server_counts_lock = Lock()
 
 
 def get_server_member_counts():
-    """Aggregate member count per server in MongoDB (cached 180s with mutex to prevent dogpiling & 502s)."""
+    """Aggregate member count per server in Turso or MongoDB."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_server_member_counts()
+
     now = time.time()
     if _server_counts_cache["data"] is not None and now < _server_counts_cache["expires_at"]:
         return _server_counts_cache["data"]
@@ -1028,6 +1074,9 @@ def get_official_guild_stats():
 
 def save_scanned_prefixes(guild_id: str, visited: set, pending_queue: list = None):
     """Persist visited prefixes AND pending queue for a guild so the search resumes exactly where it stopped."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.save_scanned_prefixes(guild_id, visited, pending_queue)
     try:
         col = get_collection("prefix_scan_progress")
         doc = {
@@ -1050,6 +1099,9 @@ def get_scanned_prefixes(guild_id: str) -> tuple:
     """Retrieve visited prefixes AND pending queue for a guild.
     Returns (visited_set, pending_list).
     """
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_scanned_prefixes(guild_id)
     try:
         col = get_collection("prefix_scan_progress")
         doc = col.find_one({"guild_id": guild_id})
@@ -1062,6 +1114,9 @@ def get_scanned_prefixes(guild_id: str) -> tuple:
 
 def clear_scanned_prefixes(guild_id: str):
     """Clear the scanned prefix progress for a guild (triggers fresh full scan)."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.clear_scanned_prefixes(guild_id)
     try:
         get_collection("prefix_scan_progress").delete_one({"guild_id": guild_id})
     except Exception:
@@ -1070,6 +1125,9 @@ def clear_scanned_prefixes(guild_id: str):
 
 def save_sync_status(guild_id: str, guild_name: str, status: dict):
     """Persist real-time sync progress for a guild."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.save_sync_status(guild_id, guild_name, status)
     try:
         col = get_collection("sync_status")
         col.update_one(
@@ -1088,6 +1146,9 @@ def save_sync_status(guild_id: str, guild_name: str, status: dict):
 
 def get_all_sync_status() -> list:
     """Retrieve sync status for all guilds."""
+    if is_turso_active():
+        import turso_database
+        return turso_database.get_all_sync_status()
     try:
         col = get_collection("sync_status")
         return [
@@ -1096,4 +1157,128 @@ def get_all_sync_status() -> list:
         ]
     except Exception:
         return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXTRACTED EMAILS COLLECTION & STORAGE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def ensure_email_indexes():
+    """Ensure indexes for extracted_emails collection."""
+    try:
+        col = get_collection("extracted_emails")
+        col.create_index([("email", ASCENDING)], unique=True)
+        col.create_index([("platform", ASCENDING)])
+        col.create_index([("extracted_at", DESCENDING)])
+    except Exception as exc:
+        logger.debug("Failed to create extracted_emails indexes: %s", exc)
+
+
+def save_extracted_email(
+    email: str,
+    platform: str = "unknown",
+    user_id: str = "",
+    username: str = "",
+    full_name: str = "",
+    phone: str = "",
+    bio: str = "",
+    source: str = "",
+    metadata: dict = None
+) -> bool:
+    """Store or update an extracted email in Turso AND MongoDB (dual-write).
+    If Turso reaches its monthly write quota, automatically falls back to MongoDB Atlas.
+    """
+    clean_email = (email or "").strip().lower()
+    if not clean_email or "@" not in clean_email:
+        return False
+
+    turso_saved = False
+    mongo_saved = False
+
+    # 1. Try saving to Turso libSQL
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_saved = turso_database.save_extracted_email(
+                email=clean_email,
+                platform=platform,
+                user_id=user_id,
+                username=username,
+                full_name=full_name,
+                phone=phone,
+                bio=bio,
+                source=source,
+                metadata=metadata
+            )
+        except Exception as exc:
+            logger.warning("Turso write quota limit or error: %s. Relying on MongoDB Atlas.", exc)
+
+    # 2. Always dual-write to MongoDB Atlas (guaranteed backup)
+    try:
+        col = get_collection("extracted_emails")
+        col.update_one(
+            {"email": clean_email},
+            {"$set": {
+                "email": clean_email,
+                "platform": platform or "unknown",
+                "user_id": str(user_id or ""),
+                "username": username or "",
+                "full_name": full_name or "",
+                "phone": phone or "",
+                "bio": bio or "",
+                "source": source or "",
+                "extracted_at": datetime.now(timezone.utc).isoformat(),
+                "metadata": metadata or {},
+            }},
+            upsert=True
+        )
+        mongo_saved = True
+    except Exception as exc:
+        logger.warning("MongoDB write notice: %s", exc)
+
+    return turso_saved or mongo_saved
+
+
+def get_extracted_emails(filter_query: dict = None, skip: int = 0, limit: int = 100) -> list:
+    """Retrieve list of extracted emails from Turso, falling back to MongoDB Atlas if needed."""
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_extracted_emails(filter_query=filter_query, skip=skip, limit=limit)
+            if res:
+                return res
+        except Exception as exc:
+            logger.warning("Turso read failed: %s. Fetching from MongoDB.", exc)
+
+    try:
+        col = get_collection("extracted_emails")
+        q = filter_query or {}
+        cursor = col.find(q).sort("extracted_at", DESCENDING).skip(skip).limit(limit)
+        results = []
+        for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            results.append(doc)
+        return results
+    except Exception as exc:
+        logger.error("Error fetching extracted emails from MongoDB: %s", exc)
+        return []
+
+
+def get_extracted_emails_count(platform: str = None) -> int:
+    """Get total count of extracted emails from Turso, with MongoDB fallback."""
+    if is_turso_active():
+        try:
+            import turso_database
+            return turso_database.get_extracted_emails_count(platform=platform)
+        except Exception:
+            pass
+
+    try:
+        col = get_collection("extracted_emails")
+        q = {"platform": platform} if platform else {}
+        return col.count_documents(q)
+    except Exception as exc:
+        logger.error("Error counting extracted emails: %s", exc)
+        return 0
+
 

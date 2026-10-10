@@ -66,15 +66,42 @@ class BrowserController:
                 "viewport": {"width": 1280, "height": 850},
                 "args": args,
             }
+            def _try_launch():
+                try:
+                    return self._playwright.chromium.launch_persistent_context(
+                        channel="chrome",
+                        **launch_kwargs
+                    )
+                except Exception:
+                    return self._playwright.chromium.launch_persistent_context(
+                        **launch_kwargs
+                    )
+
             try:
-                self.context = self._playwright.chromium.launch_persistent_context(
-                    channel="chrome",
-                    **launch_kwargs
-                )
-            except Exception:
-                self.context = self._playwright.chromium.launch_persistent_context(
-                    **launch_kwargs
-                )
+                self.context = _try_launch()
+            except Exception as launch_err:
+                err_msg = str(launch_err)
+                if "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
+                    add_log("WARN", "Chromium browser binary missing. Auto-installing Playwright Chromium...")
+                    import subprocess, sys
+                    try:
+                        res = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", "chromium"],
+                            capture_output=True,
+                            text=True,
+                            timeout=240
+                        )
+                        if res.returncode == 0:
+                            add_log("INFO", "Chromium installed successfully! Launching browser...")
+                            self.context = _try_launch()
+                        else:
+                            add_log("ERROR", f"Playwright install failed (code {res.returncode}): {res.stderr[:200]}")
+                            raise launch_err
+                    except Exception as inst_err:
+                        add_log("ERROR", f"Auto-installation error: {inst_err}")
+                        raise launch_err
+                else:
+                    raise launch_err
 
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 

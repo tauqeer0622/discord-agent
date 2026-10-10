@@ -92,6 +92,11 @@ class AutomationEngine:
 
             # Check account health before proceeding with scans
             account_info = browser_controller.check_account_status()
+            if account_info.get("logged_in"):
+                add_log("INFO", "✅ Connected X session verified: Logged in and active.")
+            else:
+                add_log("WARN", f"⚠️ X session check: {account_info.get('status')} - {account_info.get('message')}")
+
             if account_info.get("status") == "suspended":
                 self.state = "paused"
                 self.current_activity = "HALTED: Account is suspended by X (read-only mode)."

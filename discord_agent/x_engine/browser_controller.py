@@ -267,13 +267,14 @@ class BrowserController:
             return {"logged_in": False, "status": "browser_inactive", "message": "Browser inactive"}
         try:
             try:
-                self.page.goto("https://x.com/home", timeout=35000, wait_until="commit")
+                self.page.goto("https://x.com/home", timeout=35000, wait_until="domcontentloaded")
             except Exception:
                 pass
             time.sleep(3.0)
             account_btn = self.page.query_selector('[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Profile_Link"]')
             if not account_btn:
-                return {"logged_in": False, "status": "not_logged_in", "message": "Not logged in"}
+                curr_url = getattr(self.page, "url", "unknown")
+                return {"logged_in": False, "status": "not_logged_in", "message": f"Not logged in (URL: {curr_url})"}
 
             body_text = self.page.inner_text("body").lower()
             if "your account is suspended" in body_text or "permanently in read-only mode" in body_text:
@@ -303,23 +304,42 @@ class BrowserController:
             return []
 
         results: List[Dict[str, Any]] = []
-        encoded_query = urllib.parse.quote(f"{query} -is:retweet -is:reply")
+        encoded_query = urllib.parse.quote(query)
         search_url = f"https://x.com/search?q={encoded_query}&f=live"
 
         try:
-            add_log("INFO", f"Scanning X for: '{query}' (Original Posts Only)")
+            add_log("INFO", f"Scanning X for: '{query}'")
             try:
-                self.page.goto(search_url, timeout=35000, wait_until="commit")
+                self.page.goto(search_url, timeout=35000, wait_until="domcontentloaded")
             except Exception:
                 pass
-            time.sleep(random.uniform(3.0, 4.5))
 
-            # Scroll once or twice to populate feed
+            # Explicitly wait for tweets to render
+            try:
+                self.page.wait_for_selector('article[data-testid="tweet"]', timeout=12000)
+            except Exception:
+                pass
+
+            # Scroll to trigger dynamic tweet hydration
+            time.sleep(2.0)
             for _ in range(2):
-                self.page.mouse.wheel(0, 400)
-                time.sleep(random.uniform(1.0, 1.8))
+                self.page.mouse.wheel(0, 500)
+                time.sleep(1.0)
 
             articles = self.page.query_selector_all('article[data-testid="tweet"]')
+            if not articles:
+                curr_url = getattr(self.page, "url", "unknown")
+                curr_title = getattr(self.page, "title", lambda: "unknown")()
+                add_log("WARN", f"0 tweets initially visible for '{query}' (URL: {curr_url} | Title: {curr_title})")
+                try:
+                    retry_btn = self.page.query_selector('button:has-text("Retry"), [role="button"]:has-text("Retry")')
+                    if retry_btn:
+                        add_log("INFO", "Found X 'Retry' button, clicking...")
+                        retry_btn.click()
+                        time.sleep(4.0)
+                        articles = self.page.query_selector_all('article[data-testid="tweet"]')
+                except Exception:
+                    pass
             for art in articles:
                 if len(results) >= max_results:
                     break

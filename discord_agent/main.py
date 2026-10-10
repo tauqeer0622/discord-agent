@@ -339,14 +339,19 @@ def _utc_now_iso():
 
 
 async def _probe_discord_token(token):
+    clean_token = token.strip() if token else ""
+    if clean_token.startswith("Bot "):
+        clean_token = clean_token[4:].strip()
+
     result = {
         "ok": False,
         "status": None,
         "checked_at": _utc_now_iso(),
         "error": None,
+        "is_bot_token": False,
     }
     headers = {
-        "Authorization": token,
+        "Authorization": clean_token,
         "User-Agent": "Mozilla/5.0",
     }
     url = f"{DISCORD_API_BASE_URL}/users/@me"
@@ -358,6 +363,26 @@ async def _probe_discord_token(token):
                 if response.status >= 400:
                     text = await response.text()
                     result["error"] = text[:200]
+                    # If user probe returned 401, check if this is actually a Discord Bot token
+                    if response.status == 401:
+                        try:
+                            bot_headers = {
+                                "Authorization": f"Bot {clean_token}",
+                                "User-Agent": "Mozilla/5.0",
+                            }
+                            async with session.get(url, headers=bot_headers) as bot_resp:
+                                if bot_resp.status == 200:
+                                    bot_data = await bot_resp.json()
+                                    bot_name = bot_data.get("username") or "Bot"
+                                    result["is_bot_token"] = True
+                                    result["bot_username"] = bot_name
+                                    result["error"] = (
+                                        f"DISCORD_TOKEN contains a Bot Token ('{bot_name}'). "
+                                        "DISCORD_TOKEN requires your Discord User Account Token (line 9 in .env). "
+                                        "Put this bot token into DISCORD_BOT_TOKEN instead."
+                                    )
+                        except Exception:
+                            pass
                     return result
 
                 data = await response.json()
@@ -3439,7 +3464,10 @@ async def run_service():
             auth_status = client.discord_auth_probe.get("status")
             if not client.discord_auth_probe.get("ok") and auth_status in (401, 403):
                 status = client.discord_auth_probe.get("status")
-                client.discord_last_error = f"Discord token check failed with HTTP {status}."
+                if client.discord_auth_probe.get("is_bot_token"):
+                    client.discord_last_error = client.discord_auth_probe.get("error")
+                else:
+                    client.discord_last_error = f"Discord token check failed with HTTP {status}."
                 logger.error("%s", client.discord_last_error)
                 await _hold_web_server_for_diagnostics()
             elif not client.discord_auth_probe.get("ok"):

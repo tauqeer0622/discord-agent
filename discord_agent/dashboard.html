@@ -2125,10 +2125,12 @@ function renderStatus(s){
   }else{
     const d=(s&&s.discord)||{};
     const probe=d.auth_probe||{};
-    pill.className='offline';
-    txt.textContent=d.last_error&&String(d.last_error).includes('HTTP 401')
-      ? 'Token rejected'
-      : (probe.ok ? 'Connecting...' : 'Offline');
+    const isBotErr = d.last_error && String(d.last_error).includes('requires your Discord User Account Token');
+    txt.textContent = isBotErr
+      ? 'Bot Token in User Slot'
+      : (d.last_error && String(d.last_error).includes('HTTP 401')
+        ? 'Token rejected'
+        : (probe.ok ? 'Connecting...' : 'Offline'));
     pill.title=d.last_error||(probe.status?`Discord token check HTTP ${probe.status}`:'Discord is not ready yet');
   }
 }

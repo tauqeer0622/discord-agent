@@ -2125,6 +2125,7 @@ function renderStatus(s){
   }else{
     const d=(s&&s.discord)||{};
     const probe=d.auth_probe||{};
+    pill.className='offline';
     const isBotErr = d.last_error && String(d.last_error).includes('requires your Discord User Account Token');
     txt.textContent = isBotErr
       ? 'Bot Token in User Slot'

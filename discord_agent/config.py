@@ -20,7 +20,11 @@ def _clean_env_value(name):
     value = os.getenv(name)
     if value is None:
         return None
-    return value.strip().strip('"').strip("'")
+    cleaned = value.strip().strip('"').strip("'")
+    prefix = f"{name}="
+    if cleaned.startswith(prefix):
+        cleaned = cleaned[len(prefix):].strip().strip('"').strip("'")
+    return cleaned
 
 
 DISCORD_TOKEN = _clean_env_value("DISCORD_TOKEN")

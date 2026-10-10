@@ -340,6 +340,10 @@ def _utc_now_iso():
 
 async def _probe_discord_token(token):
     clean_token = token.strip() if token else ""
+    if clean_token.startswith("DISCORD_TOKEN="):
+        clean_token = clean_token.split("DISCORD_TOKEN=", 1)[1].strip().strip('"').strip("'")
+    if clean_token.startswith("DISCORD_BOT_TOKEN="):
+        clean_token = clean_token.split("DISCORD_BOT_TOKEN=", 1)[1].strip().strip('"').strip("'")
     if clean_token.startswith("Bot "):
         clean_token = clean_token[4:].strip()
 
@@ -349,6 +353,8 @@ async def _probe_discord_token(token):
         "checked_at": _utc_now_iso(),
         "error": None,
         "is_bot_token": False,
+        "token_prefix": f"{clean_token[:5]}...{clean_token[-4:]}" if len(clean_token) > 12 else "(empty or short)",
+        "token_len": len(clean_token),
     }
     headers = {
         "Authorization": clean_token,

@@ -138,6 +138,24 @@ def get_daily_comment_count() -> int:
     conn.close()
     return row["count"] if row else 0
 
+def has_replied_to_author_recently(author: str, hours: int = 24) -> bool:
+    """Anti-Spam Guard: Ensures we never reply to the same user more than once in 24 hours."""
+    clean = (author or "").strip().lower().replace("@", "")
+    if not clean or clean == "unknown":
+        return False
+    conn = get_connection()
+    cursor = conn.cursor()
+    since = (datetime.utcnow() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute("""
+        SELECT 1 FROM comments 
+        WHERE LOWER(REPLACE(author, '@', '')) = ? 
+          AND status = 'success'
+          AND posted_at >= ?
+    """, (clean, since))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
 def get_stats() -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()

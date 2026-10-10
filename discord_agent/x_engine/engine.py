@@ -7,7 +7,7 @@ try:
     from .database import (
         is_tweet_processed, save_post, update_post_status,
         save_comment, get_daily_comment_count, add_log,
-        is_user_restricted
+        is_user_restricted, has_replied_to_author_recently
     )
     from .comment_generator import generator
     from .browser_controller import browser_controller
@@ -17,7 +17,7 @@ except (ImportError, ValueError):
     from database import (
         is_tweet_processed, save_post, update_post_status,
         save_comment, get_daily_comment_count, add_log,
-        is_user_restricted
+        is_user_restricted, has_replied_to_author_recently
     )
     from comment_generator import generator
     from browser_controller import browser_controller
@@ -161,6 +161,17 @@ class AutomationEngine:
                             # Check restricted / locked reply user blacklist
                             if is_user_restricted(author):
                                 save_post(tweet_id, author, content, keyword, url, status="ignored_restricted")
+                                continue
+
+                            # Anti-Spam Safety: Never reply to own account or same user twice within 24 hours
+                            clean_author = (author or "").strip().lower().replace("@", "")
+                            if clean_author in ("tauqeer0622", "brightaxis"):
+                                save_post(tweet_id, author, content, keyword, url, status="ignored_self")
+                                continue
+
+                            if has_replied_to_author_recently(author, hours=24):
+                                save_post(tweet_id, author, content, keyword, url, status="ignored_author_cooldown")
+                                add_log("INFO", f"Skipped tweet by @{author}: 24h author interaction cooldown active.")
                                 continue
 
                             # Organic browsing simulation: real humans browse and read tweets without commenting on every single one

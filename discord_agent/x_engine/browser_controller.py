@@ -51,12 +51,18 @@ class BrowserController:
         try:
             self._playwright = sync_playwright().start()
 
-            # Anti-detection browser launch arguments
+            # Anti-detection & cloud container low-memory flags
             args = [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",  # CRITICAL for Render: prevents 64MB /dev/shm freeze & crash
+                "--disable-gpu",            # Saves 100MB+ RAM in cloud headless mode
+                "--no-zygote",
+                "--renderer-process-limit=1",
                 "--disable-infobars",
-                "--start-maximized"
+                "--disable-software-rasterizer",
+                "--js-flags=--max-old-space-size=256"
             ]
 
             launch_kwargs = {
@@ -228,6 +234,21 @@ class BrowserController:
                     {"name": "auth_token", "value": token, "domain": ".twitter.com", "path": "/", "httpOnly": True, "secure": True}
                 ])
                 add_log("INFO", "Injected X auth_token cookie into browser session.")
+
+            # Low-memory optimization: abort heavy video streams & fonts to conserve RAM on Render
+            def _block_heavy_assets(route):
+                req = route.request
+                if "upload.json" in req.url or "CreateTweet" in req.url:
+                    route.continue_()
+                elif req.resource_type in ("media", "font"):
+                    route.abort()
+                else:
+                    route.continue_()
+
+            try:
+                self.context.route("**/*", _block_heavy_assets)
+            except Exception:
+                pass
 
             self.is_running = True
             add_log("INFO", f"Browser controller started with stealth anti-detect (headless={use_headless})")

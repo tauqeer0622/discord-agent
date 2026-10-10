@@ -261,6 +261,31 @@ class BrowserController:
         status_info = self.check_account_status()
         return status_info.get("logged_in", False)
 
+    def _dismiss_popups_and_modals(self):
+        """Dismisses GDPR cookie banners, notification prompts, and overlay dialogs."""
+        if not self.page:
+            return
+        selectors = [
+            'button:has-text("Refuse non-essential cookies")',
+            'button:has-text("Accept all cookies")',
+            'button:has-text("Accept all")',
+            'button:has-text("Not now")',
+            'button:has-text("Maybe later")',
+            '[data-testid="app-bar-close"]',
+            '[aria-label="Close"]',
+            'button:has-text("Dismiss")',
+            'button:has-text("Got it")'
+        ]
+        for sel in selectors:
+            try:
+                elem = self.page.query_selector(sel)
+                if elem and elem.is_visible():
+                    add_log("INFO", f"Dismissed X overlay popup ({sel}).")
+                    elem.click()
+                    time.sleep(1.0)
+            except Exception:
+                pass
+
     def check_account_status(self) -> Dict[str, Any]:
         """Checks if the current session is active, suspended, or locked on X."""
         if not self.ensure_active():
@@ -271,10 +296,15 @@ class BrowserController:
             except Exception:
                 pass
             time.sleep(3.0)
+            self._dismiss_popups_and_modals()
+
             account_btn = self.page.query_selector('[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Profile_Link"]')
-            if not account_btn:
+            title = getattr(self.page, "title", lambda: "")()
+            is_authed = bool(account_btn or "Home / X" in title or (title.startswith("(") and "/ X" in title))
+
+            if not is_authed:
                 curr_url = getattr(self.page, "url", "unknown")
-                return {"logged_in": False, "status": "not_logged_in", "message": f"Not logged in (URL: {curr_url})"}
+                return {"logged_in": False, "status": "not_logged_in", "message": f"Not logged in (URL: {curr_url} | Title: {title})"}
 
             body_text = self.page.inner_text("body").lower()
             if "your account is suspended" in body_text or "permanently in read-only mode" in body_text:
@@ -297,7 +327,7 @@ class BrowserController:
 
     def search_tweets(self, query: str, max_results: int = 10, retry: bool = True) -> List[Dict[str, Any]]:
         """
-        Searches X for the query (using 'Live' tab for latest tweets)
+        Searches X for the query (using 'Live' tab, with automatic fallback to 'Top' tab)
         and extracts tweet elements with auto-recovery.
         """
         if not self.ensure_active():
@@ -314,23 +344,29 @@ class BrowserController:
             except Exception:
                 pass
 
+            time.sleep(2.0)
+            self._dismiss_popups_and_modals()
+
             # Explicitly wait for tweets to render
             try:
-                self.page.wait_for_selector('article[data-testid="tweet"]', timeout=12000)
+                self.page.wait_for_selector('article[data-testid="tweet"]', timeout=10000)
             except Exception:
                 pass
 
             # Scroll to trigger dynamic tweet hydration
-            time.sleep(2.0)
             for _ in range(2):
                 self.page.mouse.wheel(0, 500)
                 time.sleep(1.0)
 
             articles = self.page.query_selector_all('article[data-testid="tweet"]')
             if not articles:
+                self._dismiss_popups_and_modals()
                 curr_url = getattr(self.page, "url", "unknown")
                 curr_title = getattr(self.page, "title", lambda: "unknown")()
-                add_log("WARN", f"0 tweets initially visible for '{query}' (URL: {curr_url} | Title: {curr_title})")
+                body_snippet = self.page.inner_text("body")[:220].replace("\n", " ").strip()
+                add_log("WARN", f"0 tweets on live tab for '{query}' (URL: {curr_url} | Title: {curr_title} | Body: {body_snippet[:100]}...)")
+                
+                # Check for Retry button
                 try:
                     retry_btn = self.page.query_selector('button:has-text("Retry"), [role="button"]:has-text("Retry")')
                     if retry_btn:
@@ -340,6 +376,22 @@ class BrowserController:
                         articles = self.page.query_selector_all('article[data-testid="tweet"]')
                 except Exception:
                     pass
+
+                # If still 0, try the Top tab (often much more reliable on cloud IPs)
+                if not articles:
+                    top_url = f"https://x.com/search?q={encoded_query}"
+                    add_log("INFO", f"Checking Top tab for '{query}'...")
+                    try:
+                        self.page.goto(top_url, timeout=30000, wait_until="domcontentloaded")
+                        time.sleep(2.0)
+                        self._dismiss_popups_and_modals()
+                        try:
+                            self.page.wait_for_selector('article[data-testid="tweet"]', timeout=8000)
+                        except Exception:
+                            pass
+                        articles = self.page.query_selector_all('article[data-testid="tweet"]')
+                    except Exception:
+                        pass
             for art in articles:
                 if len(results) >= max_results:
                     break

@@ -50,7 +50,7 @@ def list_available_media() -> List[Dict[str, Any]]:
     try:
         for fname in sorted(os.listdir(media_dir)):
             ext = os.path.splitext(fname)[1].lower()
-            if ext in SUPPORTED_IMAGE_EXTS:
+            if ext in SUPPORTED_IMAGE_EXTS and not fname.startswith("debug_"):
                 full_path = os.path.join(media_dir, fname)
                 if os.path.isfile(full_path):
                     results.append({
@@ -164,6 +164,7 @@ def get_image_session_status() -> Dict[str, Any]:
         images = [
             f for f in sorted(os.listdir(media_dir))
             if os.path.splitext(f)[1].lower() in SUPPORTED_IMAGE_EXTS
+            and not f.startswith("debug_")
             and os.path.isfile(os.path.join(media_dir, f))
         ]
 

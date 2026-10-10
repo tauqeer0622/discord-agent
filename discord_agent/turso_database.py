@@ -12,28 +12,35 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import libsql_client
 from dotenv import load_dotenv
 
+# Load local directory .env as well as parent/cwd .env
 load_dotenv()
+_local_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_local_env):
+    load_dotenv(_local_env)
 
 logger = logging.getLogger("turso_database")
 
-TURSO_URL = os.getenv("TURSO_DATABASE_URL")
-TURSO_TOKEN = os.getenv("TURSO_AUTH_TOKEN")
+def _get_turso_config():
+    url = os.getenv("TURSO_DATABASE_URL")
+    token = os.getenv("TURSO_AUTH_TOKEN")
+    if url and url.startswith("libsql://"):
+        url = "https://" + url[len("libsql://"):]
+    return url, token
 
-# Fallback to a local file if Turso credentials are not yet configured in .env
+TURSO_URL, TURSO_TOKEN = _get_turso_config()
+
 if not TURSO_URL:
     LOCAL_DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "turso_local.db")
     TURSO_URL = f"file:{LOCAL_DB_FILE}"
     logger.warning("TURSO_DATABASE_URL not found in .env. Operating on local libSQL file: %s", LOCAL_DB_FILE)
 else:
-    # Use HTTPS protocol for high-performance HTTP pipeline execution
-    if TURSO_URL.startswith("libsql://"):
-        TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
     logger.info("Turso active: Connecting to %s", TURSO_URL.split("@")[-1] if "@" in TURSO_URL else TURSO_URL)
 
 _sync_client = None
@@ -41,8 +48,13 @@ _sync_client = None
 
 def get_client():
     """Return a synchronous libsql_client connection."""
-    global _sync_client
+    global _sync_client, TURSO_URL, TURSO_TOKEN
     if _sync_client is None:
+        if not TURSO_URL or TURSO_URL.startswith("file:"):
+            c_url, c_token = _get_turso_config()
+            if c_url:
+                TURSO_URL = c_url
+                TURSO_TOKEN = c_token
         if TURSO_TOKEN and not TURSO_URL.startswith("file:"):
             _sync_client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
         else:
@@ -114,7 +126,15 @@ def init_schema():
             channel_id TEXT,
             author TEXT,
             content TEXT,
+            channel_name TEXT,
+            guild_name TEXT,
+            guild_id TEXT,
+            source_message_id TEXT,
+            reply_content TEXT,
+            reply_type TEXT,
+            reply_timestamp TEXT,
             created_at TEXT,
+            author_id TEXT,
             metadata TEXT
         );
         """,
@@ -154,10 +174,14 @@ def init_schema():
         """
         CREATE TABLE IF NOT EXISTS channel_threads (
             channel_id TEXT PRIMARY KEY,
+            guild_id TEXT,
             thread_id TEXT,
+            starter_message_id TEXT,
+            last_activity TEXT,
             updated_at TEXT
         );
         """,
+        "CREATE INDEX IF NOT EXISTS idx_ct_thread ON channel_threads(thread_id);",
 
         # DM Campaigns Table
         """
@@ -172,8 +196,21 @@ def init_schema():
         """
         CREATE TABLE IF NOT EXISTS reply_rate_limit (
             id TEXT PRIMARY KEY,
-            count INTEGER,
-            window_start TEXT
+            hour_start TEXT,
+            day_start TEXT,
+            hour_count INTEGER DEFAULT 0,
+            day_count INTEGER DEFAULT 0
+        );
+        """,
+
+        # Discord Channels Table
+        """
+        CREATE TABLE IF NOT EXISTS discord_channels (
+            channel_id TEXT PRIMARY KEY,
+            label TEXT,
+            guild_id TEXT,
+            guild_name TEXT,
+            active INTEGER DEFAULT 1
         );
         """,
 
@@ -820,7 +857,496 @@ def get_latest_campaign_record() -> Optional[Dict[str, Any]]:
             return json.loads(res.rows[0][0])
     except Exception:
         pass
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DISCORD MESSAGES & REPLIES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_message(
+    author: str,
+    content: str,
+    channel_name: str,
+    guild_name: str,
+    timestamp: Any,
+    channel_id: Optional[Any] = None,
+    guild_id: Optional[Any] = None,
+    source_message_id: Optional[Any] = None,
+    author_id: Optional[Any] = None,
+) -> bool:
+    """Save an intercepted message into Turso."""
+    client = get_client()
+    created_at = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp or datetime.now(timezone.utc).isoformat())
+    msg_id = str(source_message_id or f"msg_{time.time_ns()}")
+    sql = """
+    INSERT INTO discord_messages (
+        message_id, channel_id, author, content, channel_name, guild_name,
+        guild_id, source_message_id, created_at, author_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(message_id) DO UPDATE SET
+        content = excluded.content,
+        created_at = excluded.created_at
+    """
+    try:
+        client.execute(sql, [
+            msg_id,
+            str(channel_id or ""),
+            str(author or "Unknown"),
+            str(content or ""),
+            str(channel_name or ""),
+            str(guild_name or ""),
+            str(guild_id or ""),
+            str(source_message_id or msg_id),
+            created_at,
+            str(author_id or "")
+        ])
+        return True
+    except Exception as exc:
+        logger.debug("Turso save_message notice: %s", exc)
+        return False
+
+
+def get_messages(active_channel_ids: Optional[List[int]] = None, limit: int = 200) -> List[Tuple]:
+    """Retrieve recent messages formatted as tuples matching MongoDB get_messages."""
+    client = get_client()
+    sql = """
+    SELECT message_id, author, content, channel_name, guild_name, created_at,
+           channel_id, guild_id, source_message_id, reply_content, reply_timestamp,
+           author_id, reply_type
+    FROM discord_messages
+    ORDER BY created_at DESC
+    LIMIT ?
+    """
+    try:
+        res = client.execute(sql, [limit])
+        rows = []
+        for r in res.rows:
+            ch_id = int(r[6]) if r[6] and str(r[6]).isdigit() else None
+            if active_channel_ids and ch_id not in active_channel_ids:
+                continue
+            rows.append((
+                str(r[0]),
+                r[1] or "",
+                r[2] or "",
+                r[3] or "",
+                r[4] or "",
+                str(r[5] or ""),
+                ch_id,
+                int(r[7]) if r[7] and str(r[7]).isdigit() else None,
+                int(r[8]) if r[8] and str(r[8]).isdigit() else None,
+                r[9],
+                r[10],
+                int(r[11]) if r[11] and str(r[11]).isdigit() else None,
+                r[12],
+            ))
+        return rows
+    except Exception as exc:
+        logger.debug("Turso get_messages notice: %s", exc)
+        return []
+
+
+def get_message_by_id(message_id: str) -> Optional[Dict[str, Any]]:
+    client = get_client()
+    try:
+        res = client.execute(
+            "SELECT message_id, author, content, channel_name, guild_name, created_at, "
+            "channel_id, guild_id, source_message_id, reply_content, reply_timestamp, author_id, reply_type "
+            "FROM discord_messages WHERE message_id = ? LIMIT 1",
+            [str(message_id)]
+        )
+        if res.rows:
+            r = res.rows[0]
+            return {
+                "_id": r[0],
+                "author": r[1],
+                "content": r[2],
+                "channel_name": r[3],
+                "guild_name": r[4],
+                "timestamp": r[5],
+                "channel_id": r[6],
+                "guild_id": r[7],
+                "source_message_id": r[8],
+                "reply_content": r[9],
+                "reply_timestamp": r[10],
+                "author_id": r[11],
+                "reply_type": r[12],
+            }
+    except Exception:
+        pass
     return None
+
+
+def get_latest_message_for_channel(channel_id: Any) -> Optional[Dict[str, Any]]:
+    client = get_client()
+    try:
+        res = client.execute(
+            "SELECT message_id, author, content, channel_name, guild_name, created_at, "
+            "channel_id, guild_id, source_message_id, reply_content, reply_timestamp, author_id, reply_type "
+            "FROM discord_messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT 1",
+            [str(channel_id)]
+        )
+        if res.rows:
+            r = res.rows[0]
+            return {
+                "_id": r[0],
+                "author": r[1],
+                "content": r[2],
+                "channel_name": r[3],
+                "guild_name": r[4],
+                "timestamp": r[5],
+                "channel_id": r[6],
+                "guild_id": r[7],
+                "source_message_id": r[8],
+                "reply_content": r[9],
+                "reply_timestamp": r[10],
+                "author_id": r[11],
+                "reply_type": r[12],
+            }
+    except Exception:
+        pass
+    return None
+
+
+def save_reply_for_message(message_id: str, reply_content: str, replied_at: Any = None, reply_type: str = "channel") -> bool:
+    client = get_client()
+    now_iso = replied_at.isoformat() if hasattr(replied_at, "isoformat") else (str(replied_at) if replied_at else datetime.now(timezone.utc).isoformat())
+    sql = "UPDATE discord_messages SET reply_content = ?, reply_type = ?, reply_timestamp = ? WHERE message_id = ?"
+    try:
+        client.execute(sql, [reply_content, reply_type, now_iso, str(message_id)])
+        return True
+    except Exception:
+        return False
+
+
+def save_reply_for_latest_message(channel_id: Any, reply_content: str, replied_at: Any = None, reply_type: str = "channel") -> bool:
+    client = get_client()
+    now_iso = replied_at.isoformat() if hasattr(replied_at, "isoformat") else (str(replied_at) if replied_at else datetime.now(timezone.utc).isoformat())
+    try:
+        res = client.execute("SELECT message_id FROM discord_messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT 1", [str(channel_id)])
+        if res.rows:
+            mid = res.rows[0][0]
+            return save_reply_for_message(mid, reply_content, now_iso, reply_type)
+    except Exception:
+        pass
+    return False
+
+
+def delete_old_messages(retention_days: int = 7) -> int:
+    client = get_client()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    try:
+        client.execute("DELETE FROM discord_messages WHERE created_at < ?", [cutoff])
+        return 0
+    except Exception:
+        return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHANNEL THREADS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_channel_thread(channel_id: Any) -> Optional[Tuple]:
+    client = get_client()
+    try:
+        res = client.execute("SELECT channel_id, guild_id, thread_id, starter_message_id, last_activity FROM channel_threads WHERE channel_id = ? LIMIT 1", [str(channel_id)])
+        if res.rows:
+            r = res.rows[0]
+            return (
+                int(r[0]) if str(r[0]).isdigit() else r[0],
+                int(r[1]) if r[1] and str(r[1]).isdigit() else r[1],
+                int(r[2]) if r[2] and str(r[2]).isdigit() else r[2],
+                int(r[3]) if r[3] and str(r[3]).isdigit() else r[3],
+                r[4]
+            )
+    except Exception:
+        pass
+    return None
+
+
+def get_thread_mapping(thread_id: Any) -> Optional[Tuple]:
+    client = get_client()
+    try:
+        res = client.execute("SELECT channel_id, guild_id, thread_id, starter_message_id, last_activity FROM channel_threads WHERE thread_id = ? LIMIT 1", [str(thread_id)])
+        if res.rows:
+            r = res.rows[0]
+            return (
+                int(r[0]) if str(r[0]).isdigit() else r[0],
+                int(r[1]) if r[1] and str(r[1]).isdigit() else r[1],
+                int(r[2]) if r[2] and str(r[2]).isdigit() else r[2],
+                int(r[3]) if r[3] and str(r[3]).isdigit() else r[3],
+                r[4]
+            )
+    except Exception:
+        pass
+    return None
+
+
+def save_channel_thread(channel_id: Any, guild_id: Any, thread_id: Any, starter_message_id: Any = None, last_activity: Any = None):
+    client = get_client()
+    now_iso = last_activity.isoformat() if hasattr(last_activity, "isoformat") else (str(last_activity) if last_activity else datetime.now(timezone.utc).isoformat())
+    sql = """
+    INSERT INTO channel_threads (channel_id, guild_id, thread_id, starter_message_id, last_activity, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(channel_id) DO UPDATE SET
+        guild_id = excluded.guild_id,
+        thread_id = excluded.thread_id,
+        starter_message_id = excluded.starter_message_id,
+        last_activity = excluded.last_activity,
+        updated_at = excluded.updated_at
+    """
+    try:
+        client.execute(sql, [str(channel_id), str(guild_id), str(thread_id), str(starter_message_id or ""), now_iso, now_iso])
+    except Exception:
+        pass
+
+
+def touch_channel_thread(channel_id: Any, last_activity: Any = None):
+    client = get_client()
+    now_iso = last_activity.isoformat() if hasattr(last_activity, "isoformat") else (str(last_activity) if last_activity else datetime.now(timezone.utc).isoformat())
+    try:
+        client.execute("UPDATE channel_threads SET last_activity = ?, updated_at = ? WHERE channel_id = ?", [now_iso, now_iso, str(channel_id)])
+    except Exception:
+        pass
+
+
+def get_expired_channel_threads(inactive_days: int = 7) -> List[Tuple]:
+    client = get_client()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=inactive_days)).isoformat()
+    try:
+        res = client.execute("SELECT channel_id, guild_id, thread_id, starter_message_id, last_activity FROM channel_threads WHERE last_activity <= ?", [cutoff])
+        results = []
+        for r in res.rows:
+            results.append((
+                int(r[0]) if str(r[0]).isdigit() else r[0],
+                int(r[1]) if r[1] and str(r[1]).isdigit() else r[1],
+                int(r[2]) if r[2] and str(r[2]).isdigit() else r[2],
+                int(r[3]) if r[3] and str(r[3]).isdigit() else r[3],
+                r[4]
+            ))
+        return results
+    except Exception:
+        return []
+
+
+def delete_channel_thread(channel_id: Any):
+    client = get_client()
+    try:
+        client.execute("DELETE FROM channel_threads WHERE channel_id = ?", [str(channel_id)])
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPLY RATE LIMIT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def acquire_reply_slot(hourly_limit: int = 10, daily_limit: int = 100) -> Optional[Dict[str, str]]:
+    client = get_client()
+    now = datetime.now(timezone.utc)
+    current_hour = now.strftime("%Y-%m-%d %H")
+    current_day = now.strftime("%Y-%m-%d")
+
+    try:
+        res = client.execute("SELECT hour_start, day_start, hour_count, day_count FROM reply_rate_limit WHERE id = 'global' LIMIT 1")
+        if res.rows:
+            r = res.rows[0]
+            h_start, d_start, h_count, d_count = r[0], r[1], r[2] or 0, r[3] or 0
+            if h_start != current_hour:
+                h_count = 0
+            if d_start != current_day:
+                d_count = 0
+            if h_count >= hourly_limit or d_count >= daily_limit:
+                return None
+            h_count += 1
+            d_count += 1
+            client.execute("""
+                UPDATE reply_rate_limit
+                SET hour_start = ?, day_start = ?, hour_count = ?, day_count = ?
+                WHERE id = 'global'
+            """, [current_hour, current_day, h_count, d_count])
+        else:
+            client.execute("""
+                INSERT INTO reply_rate_limit (id, hour_start, day_start, hour_count, day_count)
+                VALUES ('global', ?, ?, 1, 1)
+            """, [current_hour, current_day])
+        return {"hour_start": current_hour, "day_start": current_day}
+    except Exception as exc:
+        logger.debug("Turso rate limit notice: %s", exc)
+        return {"hour_start": current_hour, "day_start": current_day}
+
+
+def release_reply_slot(slot: Optional[Dict[str, str]]):
+    if not slot:
+        return
+    client = get_client()
+    try:
+        res = client.execute("SELECT hour_count, day_count FROM reply_rate_limit WHERE id = 'global' LIMIT 1")
+        if res.rows:
+            h_count = max(0, (res.rows[0][0] or 1) - 1)
+            d_count = max(0, (res.rows[0][1] or 1) - 1)
+            client.execute("UPDATE reply_rate_limit SET hour_count = ?, day_count = ? WHERE id = 'global'", [h_count, d_count])
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DISCORD CHANNELS CONFIG
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_discord_channels() -> List[Dict[str, Any]]:
+    client = get_client()
+    try:
+        res = client.execute("SELECT channel_id, label, guild_id, guild_name, active FROM discord_channels ORDER BY label ASC")
+        return [
+            {
+                "channel_id": int(r[0]) if str(r[0]).isdigit() else r[0],
+                "label": r[1] or "",
+                "guild_id": int(r[2]) if r[2] and str(r[2]).isdigit() else r[2],
+                "guild_name": r[3] or "",
+                "active": bool(r[4]),
+            }
+            for r in res.rows
+        ]
+    except Exception:
+        return []
+
+
+def add_discord_channel(label: str, channel_id: Any, guild_id: Any = None, guild_name: Any = None) -> bool:
+    client = get_client()
+    sql = """
+    INSERT INTO discord_channels (channel_id, label, guild_id, guild_name, active)
+    VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT(channel_id) DO UPDATE SET
+        label = excluded.label,
+        guild_id = excluded.guild_id,
+        guild_name = excluded.guild_name,
+        active = 1
+    """
+    try:
+        client.execute(sql, [str(channel_id), label, str(guild_id or ""), str(guild_name or "")])
+        return True
+    except Exception:
+        return False
+
+
+def remove_discord_channel(channel_id: Any) -> bool:
+    client = get_client()
+    try:
+        client.execute("DELETE FROM discord_channels WHERE channel_id = ?", [str(channel_id)])
+        return True
+    except Exception:
+        return False
+
+
+def toggle_discord_channel(channel_id: Any) -> Optional[bool]:
+    client = get_client()
+    try:
+        res = client.execute("SELECT active FROM discord_channels WHERE channel_id = ? LIMIT 1", [str(channel_id)])
+        if res.rows:
+            new_val = 0 if res.rows[0][0] else 1
+            client.execute("UPDATE discord_channels SET active = ? WHERE channel_id = ?", [new_val, str(channel_id)])
+            return bool(new_val)
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TELEGRAM USERS HIGH-PERFORMANCE QUERYING
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_telegram_stats(local_db_path: str = None, local_csv_path: str = None) -> Dict[str, Any]:
+    client = get_client()
+    try:
+        res_total = client.execute("SELECT COUNT(*) FROM telegram_users").rows[0][0]
+        res_ch = client.execute("SELECT COUNT(DISTINCT source_channel) FROM telegram_users WHERE source_channel IS NOT NULL AND source_channel != ''").rows[0][0]
+        res_uname = client.execute("SELECT COUNT(*) FROM telegram_users WHERE username IS NOT NULL AND username != ''").rows[0][0]
+        csv_size_mb = 0.0
+        if local_csv_path and os.path.exists(local_csv_path):
+            csv_size_mb = round(os.path.getsize(local_csv_path) / (1024 * 1024), 2)
+        return {
+            "total_users": res_total,
+            "total_channels": res_ch,
+            "with_username": res_uname,
+            "without_username": max(0, res_total - res_uname),
+            "db_size_mb": 0.0,
+            "csv_size_mb": csv_size_mb,
+            "db_exists": True,
+            "storage_backend": "Turso libSQL Cloud (Active Primary)",
+        }
+    except Exception as exc:
+        logger.debug("Turso get_telegram_stats notice: %s", exc)
+        return {
+            "total_users": 0,
+            "total_channels": 0,
+            "with_username": 0,
+            "without_username": 0,
+            "db_size_mb": 0.0,
+            "csv_size_mb": 0.0,
+            "db_exists": False,
+            "storage_backend": "None",
+        }
+
+
+def get_telegram_channels() -> List[Dict[str, Any]]:
+    client = get_client()
+    try:
+        res = client.execute("""
+            SELECT source_channel, COUNT(*) as cnt
+            FROM telegram_users
+            WHERE source_channel IS NOT NULL AND source_channel != ''
+            GROUP BY source_channel
+            ORDER BY cnt DESC
+        """)
+        return [{"channel": r[0], "count": r[1]} for r in res.rows]
+    except Exception:
+        return []
+
+
+def get_paginated_telegram_users(channel: str = None, search: str = None, page: int = 1, limit: int = 50) -> Dict[str, Any]:
+    client = get_client()
+    page = max(1, int(page or 1))
+    limit = max(1, min(200, int(limit or 50)))
+    skip = (page - 1) * limit
+    where = []
+    params = []
+    if channel and channel != "all":
+        where.append("source_channel = ?")
+        params.append(channel)
+    if search:
+        s = f"%{search.strip()}%"
+        where.append("(username LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)")
+        params.extend([s, s, s, s])
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+    try:
+        cnt_res = client.execute(f"SELECT COUNT(*) FROM telegram_users {where_sql}", params)
+        total = cnt_res.rows[0][0] if cnt_res.rows else 0
+        data_res = client.execute(
+            f"SELECT user_id, username, first_name, last_name, phone, source_channel, scraped_at FROM telegram_users {where_sql} ORDER BY scraped_at DESC LIMIT ? OFFSET ?",
+            params + [limit, skip]
+        )
+        users = [
+            {
+                "user_id": r[0],
+                "username": r[1] or "",
+                "first_name": r[2] or "",
+                "last_name": r[3] or "",
+                "phone": r[4] or "",
+                "source_channel": r[5] or "",
+                "scraped_at": r[6] or "",
+            }
+            for r in data_res.rows
+        ]
+        return {
+            "users": users,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": max(1, math.ceil(total / limit)),
+        }
+    except Exception as exc:
+        logger.error("Error fetching paginated telegram users from Turso: %s", exc)
+        return {"users": [], "total": 0, "page": page, "limit": limit, "total_pages": 1}
 
 
 def close_client():

@@ -49,3 +49,10 @@ DISCORD_CLIENT_ID = _clean_env_value("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = _clean_env_value("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = _clean_env_value("DISCORD_REDIRECT_URI") or "http://localhost:8080/api/oauth2/callback"
 DISCORD_BOT_TOKEN = _clean_env_value("DISCORD_BOT_TOKEN")
+
+# Database Backend (Turso libSQL primary, MongoDB Atlas optional backup)
+USE_TURSO = os.getenv("USE_TURSO", "true").lower() in ("true", "1")
+TURSO_DATABASE_URL = _clean_env_value("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = _clean_env_value("TURSO_AUTH_TOKEN")
+MONGODB_URI = _clean_env_value("NEW_MONGODB_URI") or _clean_env_value("MONGODB_URI")
+MONGODB_DB_NAME = _clean_env_value("MONGODB_DB_NAME") or "discord_agent_db"

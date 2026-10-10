@@ -34,45 +34,56 @@ ADMIN_ROLE_REGEX = re.compile(
 
 def is_turso_active() -> bool:
     """Return True if Turso libSQL is configured or requested via USE_TURSO."""
-    return bool(os.getenv("TURSO_DATABASE_URL") or os.getenv("USE_TURSO", "").lower() == "true")
+    return bool(os.getenv("TURSO_DATABASE_URL") or os.getenv("USE_TURSO", "true").lower() in ("true", "1"))
 
 
 def get_database():
     global _client, _database
 
     if not MONGODB_URI:
-        raise RuntimeError("MONGODB_URI is missing from the environment.")
+        if is_turso_active():
+            return None
+        raise RuntimeError("Neither TURSO_DATABASE_URL nor MONGODB_URI is configured.")
 
     if _database is None:
-        host = MONGODB_URI.split("@")[-1].split("/")[0] if "@" in MONGODB_URI else "unknown"
-        if "socialmediapost" in host:
-            logger.warning("⚠️  ALERT: Connecting to OLD quota-limited cluster: %s", host)
-        else:
-            logger.info("✅ Connected to active MongoDB cluster: %s", host)
+        try:
+            host = MONGODB_URI.split("@")[-1].split("/")[0] if "@" in MONGODB_URI else "unknown"
+            if "socialmediapost" in host:
+                logger.warning("⚠️  ALERT: Connecting to OLD quota-limited cluster: %s", host)
+            else:
+                logger.info("✅ Connected to active MongoDB cluster: %s", host)
 
-        _client = MongoClient(
-            MONGODB_URI,
-            serverSelectionTimeoutMS=10000,
-            tlsCAFile=certifi.where(),
-            tz_aware=True,
-        )
-        db_name = os.getenv("MONGODB_DB_NAME") or "discord_agent_db"
-        if db_name != "discord_agent_db":
-            try:
-                if "discord_agent_db" in _client.list_database_names():
-                    logger.info("Prioritizing 'discord_agent_db' containing 761k+ members.")
-                    db_name = "discord_agent_db"
-            except Exception:
-                pass
+            _client = MongoClient(
+                MONGODB_URI,
+                serverSelectionTimeoutMS=5000,
+                tlsCAFile=certifi.where(),
+                tz_aware=True,
+            )
+            db_name = os.getenv("MONGODB_DB_NAME") or "discord_agent_db"
+            if db_name != "discord_agent_db":
+                try:
+                    if "discord_agent_db" in _client.list_database_names():
+                        logger.info("Prioritizing 'discord_agent_db' containing 761k+ members.")
+                        db_name = "discord_agent_db"
+                except Exception:
+                    pass
 
-        _database = _client[db_name]
-        logger.info("Active MongoDB Database: '%s'", db_name)
+            _database = _client[db_name]
+            logger.info("Active MongoDB Database: '%s'", db_name)
+        except Exception as exc:
+            if is_turso_active():
+                logger.warning("MongoDB connection notice (%s). Turso is active as primary store.", exc)
+                return None
+            raise
 
     return _database
 
 
 def get_collection(name):
-    return get_database()[name]
+    db = get_database()
+    if db is None:
+        raise RuntimeError(f"MongoDB collection '{name}' unavailable. Using Turso as primary database.")
+    return db[name]
 
 
 def drop_redundant_indexes():
@@ -103,93 +114,113 @@ def drop_redundant_indexes():
                 except Exception:
                     pass
     except Exception as exc:
-        logger.warning("drop_redundant_indexes check failed: %s", exc)
+        logger.debug("drop_redundant_indexes check skipped: %s", exc)
 
 
 def initialize_database():
     from pymongo.errors import OperationFailure
-    database = get_database()
-    
-    # Retry ping up to 3 times with a short pause for cloud cold-starts
-    for attempt in range(1, 4):
+
+    # 1. Initialize Turso schema first if active
+    if is_turso_active():
         try:
-            _client.admin.command("ping")
-            break
+            import turso_database
+            turso_database.init_schema()
+            logger.info("✅ Turso libSQL schema verified and active (primary database).")
         except Exception as exc:
-            if attempt < 3:
-                logger.warning("MongoDB ping attempt %d failed (%s). Retrying in 3s...", attempt, exc)
-                time.sleep(3)
-            else:
-                raise
+            logger.warning("Turso schema initialization notice: %s", exc)
 
-    # Reclaim storage first by dropping obsolete indexes
-    drop_redundant_indexes()
+    # 2. Check if MongoDB is configured
+    if not MONGODB_URI:
+        if is_turso_active():
+            logger.info("✅ Operating in 100% Turso libSQL mode (9 GB capacity). MongoDB not configured.")
+            return
+        raise RuntimeError("Neither TURSO_DATABASE_URL nor MONGODB_URI is configured.")
 
-    # Indexes and seed writes — skip gracefully if Atlas storage quota is full (code 8000).
-    # The bot can still START and serve existing data read-only even when writes are blocked.
+    # 3. Optional MongoDB Atlas backup connection
     try:
-        database.discord_channels.create_index(
-            [("channel_id", ASCENDING)],
-            unique=True,
-        )
-        database.discord_messages.create_index(
-            [("channel_id", ASCENDING), ("timestamp", DESCENDING)]
-        )
-        database.discord_messages.create_index(
-            [("timestamp", ASCENDING)]
-        )
-        database.channel_threads.create_index(
-            [("channel_id", ASCENDING)],
-            unique=True,
-        )
-        database.channel_threads.create_index(
-            [("thread_id", ASCENDING)],
-            unique=True,
-        )
-        database.channel_threads.create_index(
-            [("last_activity", ASCENDING)]
-        )
-        database.discord_users.create_index(
-            [("user_id", ASCENDING)],
-            unique=True,
-        )
-        database.discord_users.create_index(
-            [("servers", ASCENDING)]
-        )
-        database.telegram_users.create_index(
-            [("user_id", ASCENDING)],
-            unique=True,
-        )
-        database.telegram_users.create_index(
-            [("source_channel", ASCENDING)]
-        )
-        # Dropped wasteful indexes: username, is_bot, display_name, last_seen_at, presence_status, scraped_at
+        database = get_database()
+        if database is None:
+            return
 
-        database.reply_rate_limit.update_one(
-            {"_id": "global"},
-            {
-                "$setOnInsert": {
-                    "hour_start": "",
-                    "day_start": "",
-                    "hour_count": 0,
-                    "day_count": 0,
-                }
-            },
-            upsert=True,
-        )
+        for attempt in range(1, 3):
+            try:
+                _client.admin.command("ping")
+                break
+            except Exception as exc:
+                if attempt < 2:
+                    logger.warning("MongoDB ping attempt %d failed (%s). Retrying in 2s...", attempt, exc)
+                    time.sleep(2)
+                else:
+                    raise
 
-        _migrate_legacy_sqlite(database)
-        delete_old_messages(MESSAGE_RETENTION_DAYS)
-        logger.info("MongoDB database '%s' is ready.", MONGODB_DB_NAME)
+        drop_redundant_indexes()
 
-    except OperationFailure as e:
-        if getattr(e, "code", None) == 8000:
-            logger.error(
-                "⚠️  MongoDB Atlas storage quota FULL (512 MB used). "
-                "Writes are blocked — bot will run in READ-ONLY mode. "
-                "Free up space or upgrade your Atlas cluster tier: "
-                "https://cloud.mongodb.com"
+        try:
+            database.discord_channels.create_index(
+                [("channel_id", ASCENDING)],
+                unique=True,
             )
+            database.discord_messages.create_index(
+                [("channel_id", ASCENDING), ("timestamp", DESCENDING)]
+            )
+            database.discord_messages.create_index(
+                [("timestamp", ASCENDING)]
+            )
+            database.channel_threads.create_index(
+                [("channel_id", ASCENDING)],
+                unique=True,
+            )
+            database.channel_threads.create_index(
+                [("thread_id", ASCENDING)],
+                unique=True,
+            )
+            database.channel_threads.create_index(
+                [("last_activity", ASCENDING)]
+            )
+            database.discord_users.create_index(
+                [("user_id", ASCENDING)],
+                unique=True,
+            )
+            database.discord_users.create_index(
+                [("servers", ASCENDING)]
+            )
+            database.telegram_users.create_index(
+                [("user_id", ASCENDING)],
+                unique=True,
+            )
+            database.telegram_users.create_index(
+                [("source_channel", ASCENDING)]
+            )
+
+            database.reply_rate_limit.update_one(
+                {"_id": "global"},
+                {
+                    "$setOnInsert": {
+                        "hour_start": "",
+                        "day_start": "",
+                        "hour_count": 0,
+                        "day_count": 0,
+                    }
+                },
+                upsert=True,
+            )
+
+            _migrate_legacy_sqlite(database)
+            delete_old_messages(MESSAGE_RETENTION_DAYS)
+            logger.info("MongoDB database '%s' backup sync ready.", MONGODB_DB_NAME)
+
+        except OperationFailure as e:
+            if getattr(e, "code", None) == 8000:
+                logger.warning(
+                    "⚠️  MongoDB Atlas storage quota FULL (512 MB used). "
+                    "Turso libSQL is serving as primary storage."
+                )
+            else:
+                logger.warning("MongoDB indexing warning: %s", e)
+
+    except Exception as exc:
+        if is_turso_active():
+            logger.warning("MongoDB Atlas initialization notice: %s. Operating with Turso as primary.", exc)
         else:
             raise
 
@@ -365,83 +396,149 @@ def save_message(
     source_message_id=None,
     author_id=None,
 ):
-    get_collection("discord_messages").insert_one(
-        {
-            "author": author,
-            "author_id": int(author_id) if author_id is not None else None,
-            "content": content,
-            "channel_name": channel_name,
-            "guild_name": guild_name,
-            "channel_id": int(channel_id) if channel_id is not None else None,
-            "guild_id": int(guild_id) if guild_id is not None else None,
-            "source_message_id": (
-                int(source_message_id) if source_message_id is not None else None
-            ),
-            "reply_content": None,
-            "reply_type": None,
-            "reply_timestamp": None,
-            "timestamp": _as_utc_datetime(timestamp),
-        }
-    )
-    delete_old_messages(MESSAGE_RETENTION_DAYS)
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.save_message(
+                author=author,
+                content=content,
+                channel_name=channel_name,
+                guild_name=guild_name,
+                timestamp=timestamp,
+                channel_id=channel_id,
+                guild_id=guild_id,
+                source_message_id=source_message_id,
+                author_id=author_id,
+            )
+        except Exception as exc:
+            logger.debug("Turso save_message error: %s", exc)
+
+    if MONGODB_URI:
+        try:
+            get_collection("discord_messages").insert_one(
+                {
+                    "author": author,
+                    "author_id": int(author_id) if author_id is not None else None,
+                    "content": content,
+                    "channel_name": channel_name,
+                    "guild_name": guild_name,
+                    "channel_id": int(channel_id) if channel_id is not None else None,
+                    "guild_id": int(guild_id) if guild_id is not None else None,
+                    "source_message_id": (
+                        int(source_message_id) if source_message_id is not None else None
+                    ),
+                    "reply_content": None,
+                    "reply_type": None,
+                    "reply_timestamp": None,
+                    "timestamp": _as_utc_datetime(timestamp),
+                }
+            )
+            delete_old_messages(MESSAGE_RETENTION_DAYS)
+        except Exception as exc:
+            logger.debug("MongoDB save_message notice: %s", exc)
 
 
 def delete_old_messages(retention_days=MESSAGE_RETENTION_DAYS):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    result = get_collection("discord_messages").delete_many(
-        {"timestamp": {"$lt": cutoff}}
-    )
-    if result.deleted_count:
-        logger.info(
-            "Deleted %s intercepted messages older than %s days.",
-            result.deleted_count,
-            retention_days,
-        )
-    return result.deleted_count
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.delete_old_messages(retention_days)
+        except Exception:
+            pass
+
+    if MONGODB_URI:
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+            result = get_collection("discord_messages").delete_many(
+                {"timestamp": {"$lt": cutoff}}
+            )
+            return result.deleted_count
+        except Exception:
+            pass
+    return 0
 
 
 def save_reply_for_latest_message(channel_id, reply_content, replied_at=None, reply_type="channel"):
-    collection = get_collection("discord_messages")
-    document = collection.find_one(
-        {
-            "channel_id": int(channel_id),
-            "$or": [
-                {"reply_content": None},
-                {"reply_content": {"$exists": False}},
-            ],
-        },
-        sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
-    )
-    if not document:
-        document = collection.find_one(
-            {"channel_id": int(channel_id)},
-            sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
-        )
-    if not document:
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.save_reply_for_latest_message(channel_id, reply_content, replied_at, reply_type)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
         return False
 
-    collection.update_one(
-        {"_id": document["_id"]},
-        {
-            "$set": {
-                "reply_content": reply_content,
-                "reply_type": reply_type,
-                "reply_timestamp": _as_utc_datetime(replied_at),
-            }
-        },
-    )
-    return True
+    try:
+        collection = get_collection("discord_messages")
+        document = collection.find_one(
+            {
+                "channel_id": int(channel_id),
+                "$or": [
+                    {"reply_content": None},
+                    {"reply_content": {"$exists": False}},
+                ],
+            },
+            sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
+        )
+        if not document:
+            document = collection.find_one(
+                {"channel_id": int(channel_id)},
+                sort=[("timestamp", DESCENDING), ("_id", DESCENDING)],
+            )
+        if not document:
+            return False
+
+        collection.update_one(
+            {"_id": document["_id"]},
+            {
+                "$set": {
+                    "reply_content": reply_content,
+                    "reply_type": reply_type,
+                    "reply_timestamp": _as_utc_datetime(replied_at),
+                }
+            },
+        )
+        return True
+    except Exception:
+        return False
 
 
 def get_message_by_id(message_id):
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_message_by_id(message_id)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return None
+
     try:
         object_id = ObjectId(str(message_id))
+        return get_collection("discord_messages").find_one({"_id": object_id})
     except Exception:
         return None
-    return get_collection("discord_messages").find_one({"_id": object_id})
 
 
 def get_latest_message_for_channel(channel_id):
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_latest_message_for_channel(channel_id)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return None
+
     try:
         return get_collection("discord_messages").find_one(
             {"channel_id": int(channel_id)},
@@ -452,75 +549,131 @@ def get_latest_message_for_channel(channel_id):
 
 
 def save_reply_for_message(message_id, reply_content, replied_at=None, reply_type="channel"):
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.save_reply_for_message(message_id, reply_content, replied_at, reply_type)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return False
+
     try:
         object_id = ObjectId(str(message_id))
+        result = get_collection("discord_messages").update_one(
+            {"_id": object_id},
+            {
+                "$set": {
+                    "reply_content": reply_content,
+                    "reply_type": reply_type,
+                    "reply_timestamp": _as_utc_datetime(replied_at),
+                }
+            },
+        )
+        return result.matched_count > 0
     except Exception:
         return False
 
-    result = get_collection("discord_messages").update_one(
-        {"_id": object_id},
-        {
-            "$set": {
-                "reply_content": reply_content,
-                "reply_type": reply_type,
-                "reply_timestamp": _as_utc_datetime(replied_at),
-            }
-        },
-    )
-    return result.matched_count > 0
-
 
 def get_messages():
-    database = get_database()
-    delete_old_messages(MESSAGE_RETENTION_DAYS)
-    active_channel_ids = [
-        row["channel_id"]
-        for row in database.discord_channels.find(
-            {"active": True},
-            {"channel_id": 1},
-        )
-    ]
+    if is_turso_active():
+        try:
+            import turso_database
+            return turso_database.get_messages()
+        except Exception as exc:
+            logger.debug("Turso get_messages error: %s", exc)
 
-    documents = database.discord_messages.find(
-        {"channel_id": {"$in": active_channel_ids}}
-    ).sort([("timestamp", DESCENDING), ("_id", DESCENDING)])
+    if not MONGODB_URI:
+        return []
 
-    return [
-        (
-            str(document["_id"]),
-            document["author"],
-            document["content"],
-            document.get("channel_name"),
-            document.get("guild_name"),
-            document["timestamp"].isoformat(),
-            document.get("channel_id"),
-            document.get("guild_id"),
-            document.get("source_message_id"),
-            document.get("reply_content"),
+    try:
+        database = get_database()
+        if database is None:
+            return []
+        delete_old_messages(MESSAGE_RETENTION_DAYS)
+        active_channel_ids = [
+            row["channel_id"]
+            for row in database.discord_channels.find(
+                {"active": True},
+                {"channel_id": 1},
+            )
+        ]
+
+        documents = database.discord_messages.find(
+            {"channel_id": {"$in": active_channel_ids}}
+        ).sort([("timestamp", DESCENDING), ("_id", DESCENDING)])
+
+        return [
             (
-                document["reply_timestamp"].isoformat()
-                if isinstance(document.get("reply_timestamp"), datetime)
-                else document.get("reply_timestamp")
-            ),
-            document.get("author_id"),
-            document.get("reply_type"),
-        )
-        for document in documents
-    ]
+                str(document["_id"]),
+                document["author"],
+                document["content"],
+                document.get("channel_name"),
+                document.get("guild_name"),
+                document["timestamp"].isoformat(),
+                document.get("channel_id"),
+                document.get("guild_id"),
+                document.get("source_message_id"),
+                document.get("reply_content"),
+                (
+                    document["reply_timestamp"].isoformat()
+                    if isinstance(document.get("reply_timestamp"), datetime)
+                    else document.get("reply_timestamp")
+                ),
+                document.get("author_id"),
+                document.get("reply_type"),
+            )
+            for document in documents
+        ]
+    except Exception:
+        return []
 
 
 def get_channel_thread(channel_id):
-    document = get_collection("channel_threads").find_one(
-        {"channel_id": int(channel_id)}
-    )
-    return _thread_tuple(document)
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_channel_thread(channel_id)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return None
+
+    try:
+        document = get_collection("channel_threads").find_one(
+            {"channel_id": int(channel_id)}
+        )
+        return _thread_tuple(document)
+    except Exception:
+        return None
 
 
 def get_thread_mapping(thread_id):
-    document = get_collection("channel_threads").find_one(
-        {"thread_id": int(thread_id)}
-    )
-    return _thread_tuple(document)
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_thread_mapping(thread_id)
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return None
+
+    try:
+        document = get_collection("channel_threads").find_one(
+            {"thread_id": int(thread_id)}
+        )
+        return _thread_tuple(document)
+    except Exception:
+        return None
 
 
 def save_channel_thread(
@@ -530,124 +683,210 @@ def save_channel_thread(
     starter_message_id=None,
     last_activity=None,
 ):
-    get_collection("channel_threads").update_one(
-        {"channel_id": int(channel_id)},
-        {
-            "$set": {
-                "guild_id": int(guild_id),
-                "thread_id": int(thread_id),
-                "starter_message_id": (
-                    int(starter_message_id) if starter_message_id else None
-                ),
-                "last_activity": _as_utc_datetime(last_activity),
-            }
-        },
-        upsert=True,
-    )
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.save_channel_thread(channel_id, guild_id, thread_id, starter_message_id, last_activity)
+            if not MONGODB_URI:
+                return
+        except Exception:
+            pass
 
+    if not MONGODB_URI:
+        return
 
-def touch_channel_thread(channel_id, last_activity=None):
-    get_collection("channel_threads").update_one(
-        {"channel_id": int(channel_id)},
-        {"$set": {"last_activity": _as_utc_datetime(last_activity)}},
-    )
-
-
-def get_expired_channel_threads(inactive_days=7):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=inactive_days)
-    documents = get_collection("channel_threads").find(
-        {"last_activity": {"$lte": cutoff}}
-    )
-    return [_thread_tuple(document) for document in documents]
-
-
-def delete_channel_thread(channel_id):
-    get_collection("channel_threads").delete_one(
-        {"channel_id": int(channel_id)}
-    )
-
-
-def acquire_reply_slot():
-    with _reply_limit_lock:
-        collection = get_collection("reply_rate_limit")
-        document = collection.find_one({"_id": "global"}) or {}
-        now = datetime.now(timezone.utc)
-        current_hour = now.strftime("%Y-%m-%d %H")
-        current_day = now.strftime("%Y-%m-%d")
-
-        hour_count = document.get("hour_count", 0)
-        day_count = document.get("day_count", 0)
-
-        if document.get("hour_start") != current_hour:
-            hour_count = 0
-        if document.get("day_start") != current_day:
-            day_count = 0
-
-        if hour_count >= HOURLY_REPLY_LIMIT or day_count >= DAILY_REPLY_LIMIT:
-            return None
-
-        collection.update_one(
-            {"_id": "global"},
+    try:
+        get_collection("channel_threads").update_one(
+            {"channel_id": int(channel_id)},
             {
                 "$set": {
-                    "hour_start": current_hour,
-                    "day_start": current_day,
-                    "hour_count": hour_count + 1,
-                    "day_count": day_count + 1,
+                    "guild_id": int(guild_id),
+                    "thread_id": int(thread_id),
+                    "starter_message_id": (
+                        int(starter_message_id) if starter_message_id else None
+                    ),
+                    "last_activity": _as_utc_datetime(last_activity),
                 }
             },
             upsert=True,
         )
+    except Exception:
+        pass
 
-        return {
-            "hour_start": current_hour,
-            "day_start": current_day,
-        }
+
+def touch_channel_thread(channel_id, last_activity=None):
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.touch_channel_thread(channel_id, last_activity)
+            if not MONGODB_URI:
+                return
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return
+
+    try:
+        get_collection("channel_threads").update_one(
+            {"channel_id": int(channel_id)},
+            {"$set": {"last_activity": _as_utc_datetime(last_activity)}},
+        )
+    except Exception:
+        pass
+
+
+def get_expired_channel_threads(inactive_days=7):
+    if is_turso_active():
+        try:
+            import turso_database
+            return turso_database.get_expired_channel_threads(inactive_days)
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return []
+
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=inactive_days)
+        documents = get_collection("channel_threads").find(
+            {"last_activity": {"$lte": cutoff}}
+        )
+        return [_thread_tuple(document) for document in documents]
+    except Exception:
+        return []
+
+
+def delete_channel_thread(channel_id):
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.delete_channel_thread(channel_id)
+            if not MONGODB_URI:
+                return
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return
+
+    try:
+        get_collection("channel_threads").delete_one(
+            {"channel_id": int(channel_id)}
+        )
+    except Exception:
+        pass
+
+
+def acquire_reply_slot():
+    if is_turso_active():
+        try:
+            import turso_database
+            return turso_database.acquire_reply_slot(HOURLY_REPLY_LIMIT, DAILY_REPLY_LIMIT)
+        except Exception:
+            pass
+
+    with _reply_limit_lock:
+        if not MONGODB_URI:
+            now = datetime.now(timezone.utc)
+            return {"hour_start": now.strftime("%Y-%m-%d %H"), "day_start": now.strftime("%Y-%m-%d")}
+
+        try:
+            collection = get_collection("reply_rate_limit")
+            document = collection.find_one({"_id": "global"}) or {}
+            now = datetime.now(timezone.utc)
+            current_hour = now.strftime("%Y-%m-%d %H")
+            current_day = now.strftime("%Y-%m-%d")
+
+            hour_count = document.get("hour_count", 0)
+            day_count = document.get("day_count", 0)
+
+            if document.get("hour_start") != current_hour:
+                hour_count = 0
+            if document.get("day_start") != current_day:
+                day_count = 0
+
+            if hour_count >= HOURLY_REPLY_LIMIT or day_count >= DAILY_REPLY_LIMIT:
+                return None
+
+            collection.update_one(
+                {"_id": "global"},
+                {
+                    "$set": {
+                        "hour_start": current_hour,
+                        "day_start": current_day,
+                        "hour_count": hour_count + 1,
+                        "day_count": day_count + 1,
+                    }
+                },
+                upsert=True,
+            )
+
+            return {
+                "hour_start": current_hour,
+                "day_start": current_day,
+            }
+        except Exception:
+            now = datetime.now(timezone.utc)
+            return {"hour_start": now.strftime("%Y-%m-%d %H"), "day_start": now.strftime("%Y-%m-%d")}
 
 
 def release_reply_slot(slot):
     if not slot:
         return
 
-    with _reply_limit_lock:
-        collection = get_collection("reply_rate_limit")
-        document = collection.find_one({"_id": "global"})
-        if not document:
-            return
+    if is_turso_active():
+        try:
+            import turso_database
+            turso_database.release_reply_slot(slot)
+            if not MONGODB_URI:
+                return
+        except Exception:
+            pass
 
-        hour_count = document.get("hour_count", 0)
-        day_count = document.get("day_count", 0)
+    if not MONGODB_URI:
+        return
 
-        if document.get("hour_start") == slot.get("hour_start"):
-            hour_count = max(0, hour_count - 1)
-        if document.get("day_start") == slot.get("day_start"):
-            day_count = max(0, day_count - 1)
+    try:
+        with _reply_limit_lock:
+            collection = get_collection("reply_rate_limit")
+            document = collection.find_one({"_id": "global"})
+            if not document:
+                return
 
-        collection.update_one(
-            {"_id": "global"},
-            {
-                "$set": {
-                    "hour_count": hour_count,
-                    "day_count": day_count,
-                }
-            },
-        )
+            hour_count = document.get("hour_count", 0)
+            day_count = document.get("day_count", 0)
+
+            if document.get("hour_start") == slot.get("hour_start"):
+                hour_count = max(0, hour_count - 1)
+            if document.get("day_start") == slot.get("day_start"):
+                day_count = max(0, day_count - 1)
+
+            collection.update_one(
+                {"_id": "global"},
+                {
+                    "$set": {
+                        "hour_count": hour_count,
+                        "day_count": day_count,
+                    }
+                },
+            )
+    except Exception:
+        pass
 
 
 # ── Discord Users High-Scale Directory ─────────────────────────
 
 def upsert_user(user_data):
-    """Upsert a single Discord user into MongoDB ensuring zero duplicates.
-    Only stores fields essential for DM campaigns to keep document size minimal.
-    """
+    """Upsert a single Discord user into Turso or MongoDB ensuring zero duplicates."""
     if not user_data or not user_data.get("user_id"):
         return
-    if user_data.get("is_admin"):
+    if is_turso_active():
+        import turso_database
+        return turso_database.bulk_upsert_users([user_data])
+
+    if not MONGODB_URI:
         return
-    assigned_roles = user_data.get("assigned_roles") or []
-    if any(isinstance(r, str) and ADMIN_ROLE_REGEX.search(r) for r in assigned_roles):
-        return
-    user_id = str(user_data["user_id"])
 
     # Slim schema — only essential fields stored (saves ~330 bytes/doc vs old schema)
     set_fields = {
@@ -1033,9 +1272,23 @@ def get_server_member_counts():
 
 
 def save_official_guild_stats(guild_list):
-    """Persist official Discord server metadata and official member counts in MongoDB."""
+    """Persist official Discord server metadata and official member counts."""
     if not guild_list:
         return
+
+    if is_turso_active():
+        try:
+            import turso_database
+            for g in guild_list:
+                gid = str(g.get("guild_id") or "")
+                if gid:
+                    turso_database.save_official_guild_stats(gid, g)
+        except Exception as exc:
+            logger.debug("Turso save_official_guild_stats notice: %s", exc)
+
+    if not MONGODB_URI:
+        return
+
     try:
         collection = get_collection("guild_official_stats")
         for g in guild_list:
@@ -1058,18 +1311,30 @@ def save_official_guild_stats(guild_list):
 
 
 def get_official_guild_stats():
-    """Retrieve persisted official Discord server stats from MongoDB."""
-    collection = get_collection("guild_official_stats")
-    records = {}
+    """Retrieve persisted official Discord server stats from Turso or MongoDB."""
+    if is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_official_guild_stats()
+            if res or not MONGODB_URI:
+                return res
+        except Exception:
+            pass
+
+    if not MONGODB_URI:
+        return {}
+
     try:
+        collection = get_collection("guild_official_stats")
+        records = {}
         for doc in collection.find({}):
             doc.pop("_id", None)
             s_name = doc.get("server_name")
             if s_name:
                 records[s_name] = doc
+        return records
     except Exception:
-        pass
-    return records
+        return {}
 
 
 def save_scanned_prefixes(guild_id: str, visited: set, pending_queue: list = None):

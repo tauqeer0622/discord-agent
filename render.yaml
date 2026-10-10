@@ -16,10 +16,24 @@ services:
         sync: false
       - key: CONTROL_CHANNEL_ID
         sync: false
+      - key: USE_TURSO
+        value: "true"
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
       - key: MONGODB_URI
         sync: false
       - key: MONGODB_DB_NAME
         value: discord_agent_db
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_REDIRECT_URI
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: OPENAI_MODEL

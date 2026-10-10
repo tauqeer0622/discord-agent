@@ -30,7 +30,7 @@ try:
             print(f"  - {t}: error ({e})")
 
     if 'extracted_emails' in table_names:
-        recent_emails = client.execute("SELECT email, username, source, extracted_at FROM extracted_emails ORDER BY id DESC LIMIT 5").rows
+        recent_emails = client.execute("SELECT email, username, source, extracted_at FROM extracted_emails ORDER BY extracted_at DESC LIMIT 5").rows
         print("\nRecent Extracted Emails in Turso:")
         for r in recent_emails:
             print(f"  - {r[0]} | @{r[1]} | {r[2]} | {r[3]}")

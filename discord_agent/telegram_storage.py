@@ -130,10 +130,20 @@ def import_csv_to_sqlite(csv_file_path: str, db_path: str = LOCAL_DB_PATH) -> in
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_telegram_stats(db_path: str = LOCAL_DB_PATH) -> Dict[str, Any]:
-    """Return high-level summary statistics of scraped Telegram members from MongoDB."""
+    """Return high-level summary statistics of scraped Telegram members from Turso or MongoDB."""
     csv_size_mb = 0.0
     if os.path.exists(LOCAL_CSV_PATH):
         csv_size_mb = round(os.path.getsize(LOCAL_CSV_PATH) / (1024 * 1024), 2)
+
+    import database
+    if database.is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_telegram_stats(local_db_path=db_path, local_csv_path=LOCAL_CSV_PATH)
+            if res and res.get("total_users", 0) > 0:
+                return res
+        except Exception as exc:
+            logger.debug("Turso get_telegram_stats notice: %s", exc)
 
     col = get_mongo_collection()
     if col is not None:
@@ -203,6 +213,16 @@ def get_telegram_stats(db_path: str = LOCAL_DB_PATH) -> Dict[str, Any]:
 
 def get_telegram_channels(db_path: str = LOCAL_DB_PATH) -> List[Dict[str, Any]]:
     """Return all distinct source channels sorted by member count descending."""
+    import database
+    if database.is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_telegram_channels()
+            if res:
+                return res
+        except Exception as exc:
+            logger.debug("Turso get_telegram_channels notice: %s", exc)
+
     col = get_mongo_collection()
     if col is not None:
         try:
@@ -248,8 +268,8 @@ def get_paginated_telegram_users(
     db_path: str = LOCAL_DB_PATH,
 ) -> Dict[str, Any]:
     """
-    Return paginated and filtered list of Telegram members from MongoDB Atlas.
-    Falls back gracefully to local SQLite if MongoDB is unreachable.
+    Return paginated and filtered list of Telegram members from Turso or MongoDB.
+    Falls back gracefully to local SQLite if unreachable.
     """
     try:
         page = max(1, int(page))
@@ -260,6 +280,16 @@ def get_paginated_telegram_users(
         limit = min(200, max(1, int(limit)))
     except (ValueError, TypeError):
         limit = 50
+
+    import database
+    if database.is_turso_active():
+        try:
+            import turso_database
+            res = turso_database.get_paginated_telegram_users(channel=channel, search=search, page=page, limit=limit)
+            if res and res.get("total", 0) > 0:
+                return res
+        except Exception as exc:
+            logger.debug("Turso get_paginated_telegram_users notice: %s", exc)
 
     offset = (page - 1) * limit
 

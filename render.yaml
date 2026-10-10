@@ -64,3 +64,9 @@ services:
         value: "us-east-1"
       - key: S3_PUBLIC_URL
         sync: false
+      - key: X_AUTH_TOKEN
+        sync: false
+      - key: ATTACH_IMAGE
+        value: "true"
+      - key: DRY_RUN
+        sync: false

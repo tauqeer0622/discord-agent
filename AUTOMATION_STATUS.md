@@ -44,5 +44,24 @@ Using the proven **X Growth Architecture** (Stealth browser + keyword monitoring
 ## 4. Overall Delivery Timeline
 
 * **Phase 1 (Current):** Finalize S3 connection for hands-free X image generation (1 Day after access).
-* **Phase 2:** Launch Reddit automation .
-* **Phase 3:** Launch YouTube & Facebook automation   .
+* **Phase 2:** Launch Reddit automation.
+* **Phase 3:** Launch YouTube & Facebook automation.
+
+---
+
+## 5. How to Re-Enable Member Scraping on Render (If Ever Needed)
+
+Because **2.24M+ members** are already captured in Turso, scraping is frozen by default to keep container memory low (~110 MB) and protect database write quotas.
+
+To resume scraping at any time:
+1. Open your **Render Dashboard** → Select **`discord-command-center`**.
+2. Go to the **Environment** tab on the left.
+3. Click **Add Environment Variable**:
+   * **Key:** `ENABLE_MEMBER_SCRAPING`
+   * **Value:** `true`
+4. *(Optional — for automatic continuous scraping on startup without clicking buttons)*:
+   * **Key:** `AUTO_MEMBER_SYNC_ENABLED`
+   * **Value:** `true`
+5. Click **Save Changes**. Render will automatically restart with scraping active.
+
+*(To pause again later, change the value back to `false` or delete the variable).*

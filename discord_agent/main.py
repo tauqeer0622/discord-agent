@@ -1926,7 +1926,9 @@ class CommandCenterClient(discord.Client):
                 await asyncio.sleep(1.0)
 
     def queue_members_for_upsert_raw(self, user_dicts):
-        """Enqueue raw user dicts for the background DB writer."""
+        """Enqueue raw user dicts for the background DB writer (Scraping stopped: 2.24M+ members captured)."""
+        if not os.getenv("ENABLE_MEMBER_SCRAPING", "false").lower() == "true":
+            return
         if not user_dicts:
             return
         if hasattr(self, "_db_member_queue"):
@@ -1936,6 +1938,8 @@ class CommandCenterClient(discord.Client):
         """Convert a list of discord.Member objects into DB records and queue for background upsert.
         Excludes administrators, moderators, and staff members from being indexed.
         """
+        if not os.getenv("ENABLE_MEMBER_SCRAPING", "false").lower() == "true":
+            return
         if not members:
             return
         batch = []
@@ -2008,6 +2012,10 @@ class CommandCenterClient(discord.Client):
                 pass
 
     async def _sync_single_guild(self, guild, rate_limiter: GatewayRateLimiter = None):
+        if not os.getenv("ENABLE_MEMBER_SCRAPING", "false").lower() == "true":
+            logger.debug("Member scraping is disabled. Skipping guild '%s'.", getattr(guild, "name", "unknown"))
+            return
+
         if rate_limiter is None:
             rate_limiter = getattr(self, "gateway_rate_limiter", None)
 
@@ -2294,6 +2302,9 @@ class CommandCenterClient(discord.Client):
         Runs up to 2 guilds simultaneously to avoid channel member list collisions,
         while all gateway queries are rate-limited to safely stay within Discord's 120/min budget.
         """
+        if not os.getenv("ENABLE_MEMBER_SCRAPING", "false").lower() == "true":
+            logger.info("ℹ️ Guild member discovery is disabled (2.24M+ members already captured in Turso).")
+            return
         if not self.is_ready() or not self.guilds:
             return
         if getattr(self, "_syncing_members", False):
@@ -2527,6 +2538,11 @@ class CommandCenterClient(discord.Client):
 
     async def handle_post_sync_all(self, request):
         """Trigger an immediate deep sync across all servers."""
+        if not os.getenv("ENABLE_MEMBER_SCRAPING", "false").lower() == "true":
+            return web.json_response({
+                "success": True,
+                "message": "Member scraping is locked & completed: Database already contains 2.24M+ members. Safe mode active."
+            }, headers=CORS_HEADERS)
         try:
             if getattr(self, "_syncing_members", False):
                 return web.json_response({
@@ -2928,17 +2944,7 @@ class CommandCenterClient(discord.Client):
             guild.id,
             getattr(guild, "member_count", "unknown")
         )
-        # Give Discord 5 seconds to finish initial guild handshake and channel caching
-        await asyncio.sleep(5.0)
-        try:
-            await guild.subscribe()
-            logger.info("Subscribed to gateway events for '%s'", guild.name)
-        except Exception as e:
-            logger.debug("Could not subscribe to '%s': %s", guild.name, e)
-
-        # Trigger sync only if this guild is not already actively syncing
-        if str(guild.id) not in getattr(self, "_active_sync_guilds", set()):
-            asyncio.create_task(self._sync_single_guild(guild, self.gateway_rate_limiter))
+        # Scraping disabled: 2.24M+ members already captured in database. No auto-sync triggered.
 
     async def handle_get_extracted_emails(self, request):
         """Return list of all captured emails from Turso/MongoDB."""

@@ -58,9 +58,6 @@ class BrowserController:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",  # CRITICAL for Render: prevents 64MB /dev/shm freeze & crash
                 "--disable-gpu",            # Saves 100MB+ RAM in cloud headless mode
-                "--no-zygote",
-                "--renderer-process-limit=1",
-                "--disable-infobars",
                 "--disable-software-rasterizer",
                 "--disable-extensions",
                 "--disable-background-networking",
@@ -68,7 +65,6 @@ class BrowserController:
                 "--disable-sync",
                 "--mute-audio",
                 "--no-first-run",
-                "--js-flags=--max-old-space-size=128"  # Restrict V8 JavaScript heap to 128MB
             ]
 
             launch_kwargs = {

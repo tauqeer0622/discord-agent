@@ -227,15 +227,19 @@ class BrowserController:
                 ])
                 add_log("INFO", "Injected X auth_token cookie into browser session.")
 
-            # Low-memory optimization: abort heavy video streams & fonts to conserve RAM on Render
+            # Low-memory optimization: abort heavy decorative images, video streams & fonts to conserve RAM on Render
             def _block_heavy_assets(route):
                 req = route.request
-                if "upload.json" in req.url or "CreateTweet" in req.url:
+                url = req.url
+                # Always allow critical endpoints like image upload, tweet posting, and API requests
+                if "upload" in url or "CreateTweet" in url or "graphql" in url or "api" in url:
                     route.continue_()
-                elif req.resource_type in ("media", "font"):
+                    return
+                # Abort heavy media, image bitmaps, and fonts to save 180MB+ RAM during tweet scans
+                if req.resource_type in ("image", "media", "font", "images"):
                     route.abort()
-                else:
-                    route.continue_()
+                    return
+                route.continue_()
 
             try:
                 self.context.route("**/*", _block_heavy_assets)

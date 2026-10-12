@@ -457,7 +457,11 @@ class GatewayRateLimiter:
 
 class CommandCenterClient(discord.Client):
     def __init__(self):
-        super().__init__(chunk_guilds_at_startup=False)
+        super().__init__(
+            chunk_guilds_at_startup=False,
+            max_messages=20,
+            member_cache_flags=discord.MemberCacheFlags.none()
+        )
 
         self.web_server_started = False
         self.web_runner = None

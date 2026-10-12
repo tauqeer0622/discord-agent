@@ -5,6 +5,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PORT=10000
 
+# Aggressive Linux glibc & Python memory tuning to prevent heap fragmentation under 512MB limit
+ENV PYTHONMALLOC=malloc
+ENV MALLOC_TRIM_THRESHOLD_=65536
+ENV MALLOC_ARENA_MAX=2
+
 WORKDIR /app
 
 # Copy requirements and install Python dependencies

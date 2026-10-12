@@ -325,15 +325,38 @@ class BrowserController:
                 self.page.goto("https://x.com/home", timeout=35000, wait_until="domcontentloaded")
             except Exception:
                 pass
-            time.sleep(3.0)
-            self._dismiss_popups_and_modals()
 
-            account_btn = self.page.query_selector('[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Profile_Link"]')
-            title = getattr(self.page, "title", lambda: "")()
-            is_authed = bool(account_btn or "Home / X" in title or (title.startswith("(") and "/ X" in title))
+            # Resiliently wait up to 12s for React client bundle to hydrate
+            auth_selectors = '[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AppTabBar_Profile_Link"], [data-testid="primaryColumn"], [data-testid="tweetTextarea_0"]'
+            unauth_selectors = '[data-testid="loginButton"], a[href="/login"], a[href*="/flow/login"], [data-testid="signupButton"]'
+
+            is_authed = False
+            title = ""
+            curr_url = ""
+
+            for _ in range(12):
+                self._dismiss_popups_and_modals()
+                title = getattr(self.page, "title", lambda: "")()
+                curr_url = getattr(self.page, "url", "unknown")
+
+                # Title indicator (e.g. "Home / X" or "(3) Home / X")
+                if "Home / X" in title or (title.startswith("(") and "/ X" in title):
+                    is_authed = True
+                    break
+
+                # Authenticated DOM elements
+                if self.page.query_selector(auth_selectors):
+                    is_authed = True
+                    break
+
+                # Unauthenticated indicators
+                if self.page.query_selector(unauth_selectors) or "/i/flow/login" in curr_url or "/login" in curr_url:
+                    is_authed = False
+                    break
+
+                time.sleep(1.0)
 
             if not is_authed:
-                curr_url = getattr(self.page, "url", "unknown")
                 return {"logged_in": False, "status": "not_logged_in", "message": f"Not logged in (URL: {curr_url} | Title: {title})"}
 
             body_text = ""
@@ -360,16 +383,10 @@ class BrowserController:
         except Exception as e:
             add_log("WARN", f"Session check encountered: {str(e)}")
             return {"logged_in": False, "status": "error", "message": str(e)}
-        finally:
-            try:
-                if self.page and not self.page.is_closed():
-                    self.page.goto("about:blank", timeout=5000)
-            except Exception:
-                pass
 
     def search_tweets(self, query: str, max_results: int = 10, retry: bool = True) -> List[Dict[str, Any]]:
         """
-        Searches X for the query (using 'Live' tab, with automatic fallback to 'Top' tab)
+        Searches X for the query (using Top tab first for high reliability, with automatic fallback to Live tab)
         and extracts tweet elements with auto-recovery.
         """
         if not self.ensure_active():
@@ -377,7 +394,7 @@ class BrowserController:
 
         results: List[Dict[str, Any]] = []
         encoded_query = urllib.parse.quote(query)
-        search_url = f"https://x.com/search?q={encoded_query}&f=live"
+        search_url = f"https://x.com/search?q={encoded_query}"
 
         try:
             add_log("INFO", f"Scanning X for: '{query}'")
@@ -406,7 +423,7 @@ class BrowserController:
                 curr_url = getattr(self.page, "url", "unknown")
                 curr_title = getattr(self.page, "title", lambda: "unknown")()
                 body_snippet = self.page.inner_text("body")[:220].replace("\n", " ").strip()
-                add_log("WARN", f"0 tweets on live tab for '{query}' (URL: {curr_url} | Title: {curr_title} | Body: {body_snippet[:100]}...)")
+                add_log("WARN", f"0 tweets on Top tab for '{query}' (URL: {curr_url} | Title: {curr_title} | Body: {body_snippet[:100]}...)")
                 
                 # Check for Retry button
                 try:
@@ -419,12 +436,12 @@ class BrowserController:
                 except Exception:
                     pass
 
-                # If still 0, try the Top tab (often much more reliable on cloud IPs)
+                # If still 0, try the Live tab as fallback
                 if not articles:
-                    top_url = f"https://x.com/search?q={encoded_query}"
-                    add_log("INFO", f"Checking Top tab for '{query}'...")
+                    live_url = f"https://x.com/search?q={encoded_query}&f=live"
+                    add_log("INFO", f"Checking Live tab fallback for '{query}'...")
                     try:
-                        self.page.goto(top_url, timeout=30000, wait_until="domcontentloaded")
+                        self.page.goto(live_url, timeout=30000, wait_until="domcontentloaded")
                         time.sleep(2.0)
                         self._dismiss_popups_and_modals()
                         try:
@@ -434,6 +451,7 @@ class BrowserController:
                         articles = self.page.query_selector_all('article[data-testid="tweet"]')
                     except Exception:
                         pass
+
             for art in articles:
                 if len(results) >= max_results:
                     break

@@ -550,7 +550,7 @@ class CommandCenterClient(discord.Client):
         runner = web.AppRunner(app)
         await runner.setup()
         self.web_runner = runner
-        port = int(os.getenv("PORT", "8080"))
+        port = int(os.getenv("PORT", "10000"))
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
         logger.info("Web API + Dashboard started on http://0.0.0.0:%s", port)
@@ -3453,16 +3453,18 @@ DISCORD_CLIENT_SECRET=your_client_secret_here</code></pre>
 # ── Entry Point ────────────────────────────────────────────────
 
 async def run_service():
-    if not DISCORD_TOKEN:
-        logger.error("Cannot start bot without DISCORD_TOKEN. Please check your .env file.")
-        return
-
     logger.info("Starting Discord Command Center...")
     client = CommandCenterClient()
 
     try:
         await client.start_web_server()
         client.web_server_started = True
+
+        if not DISCORD_TOKEN:
+            client.discord_last_error = "Cannot start bot without DISCORD_TOKEN. Please set DISCORD_TOKEN in Render environment."
+            logger.error("%s", client.discord_last_error)
+            await _hold_web_server_for_diagnostics()
+            return
         client.discord_login_started_at = _utc_now_iso()
         asyncio.create_task(_watch_discord_startup(client))
         if DISCORD_AUTH_PROBE_ENABLED:
@@ -3501,7 +3503,8 @@ async def run_service():
             await _hold_web_server_for_diagnostics()
     except Exception as e:
         client.discord_last_error = str(e)[:200]
-        logger.error(f"Critical error: {e}")
+        logger.error(f"Critical error: {e}", exc_info=True)
+        await _hold_web_server_for_diagnostics()
     finally:
         if x_engine and hasattr(x_engine, "engine") and getattr(x_engine.engine, "state", "") == "running":
             try:

@@ -4,6 +4,7 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=0
+ENV PORT=10000
 
 # Install Linux system dependencies required by Chromium/Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \

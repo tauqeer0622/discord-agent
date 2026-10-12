@@ -51,7 +51,7 @@ class BrowserController:
         try:
             self._playwright = sync_playwright().start()
 
-            # Anti-detection & cloud container low-memory flags
+            # Anti-detection & cloud container ultra-low-memory flags (tuned for 512MB RAM constraint)
             args = [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
@@ -62,7 +62,13 @@ class BrowserController:
                 "--renderer-process-limit=1",
                 "--disable-infobars",
                 "--disable-software-rasterizer",
-                "--js-flags=--max-old-space-size=256"
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--mute-audio",
+                "--no-first-run",
+                "--js-flags=--max-old-space-size=128"  # Restrict V8 JavaScript heap to 128MB
             ]
 
             launch_kwargs = {
@@ -72,42 +78,32 @@ class BrowserController:
                 "viewport": {"width": 1280, "height": 850},
                 "args": args,
             }
+
             def _try_launch():
-                try:
-                    return self._playwright.chromium.launch_persistent_context(
-                        channel="chrome",
-                        **launch_kwargs
-                    )
-                except Exception:
-                    return self._playwright.chromium.launch_persistent_context(
-                        **launch_kwargs
-                    )
+                # On Windows local dev, prefer system Chrome if available; on Linux/cloud, launch Chromium directly
+                if os.name == "nt":
+                    try:
+                        return self._playwright.chromium.launch_persistent_context(
+                            channel="chrome",
+                            **launch_kwargs
+                        )
+                    except Exception:
+                        pass
+                return self._playwright.chromium.launch_persistent_context(**launch_kwargs)
 
             try:
                 self.context = _try_launch()
             except Exception as launch_err:
                 err_msg = str(launch_err)
                 if "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
-                    add_log("WARN", "Chromium browser binary missing. Auto-installing Playwright Chromium...")
-                    import subprocess, sys
-                    try:
-                        res = subprocess.run(
-                            [sys.executable, "-m", "playwright", "install", "chromium"],
-                            capture_output=True,
-                            text=True,
-                            timeout=240
-                        )
-                        if res.returncode == 0:
-                            add_log("INFO", "Chromium installed successfully! Launching browser...")
-                            self.context = _try_launch()
-                        else:
-                            add_log("ERROR", f"Playwright install failed (code {res.returncode}): {res.stderr[:200]}")
-                            raise launch_err
-                    except Exception as inst_err:
-                        add_log("ERROR", f"Auto-installation error: {inst_err}")
-                        raise launch_err
+                    add_log("ERROR", "❌ Chromium browser binary is not pre-installed in this container environment. "
+                                     "Deploy using Dockerfile on Render so browser dependencies are baked in at build time.")
+                elif "shared libraries" in err_msg or "libnss3" in err_msg or "libgbm" in err_msg:
+                    add_log("ERROR", f"❌ Missing Linux OS graphics libraries for Chromium ({err_msg[:120]}). Deploy with Dockerfile on Render.")
                 else:
-                    raise launch_err
+                    add_log("ERROR", f"❌ Chromium launch error: {err_msg[:180]}")
+                self.stop()
+                return False
 
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
 

@@ -1,11 +1,10 @@
 services:
   - type: web
     name: discord-command-center
-    runtime: python
+    runtime: docker
     plan: free
-    rootDir: discord_agent
-    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
-    startCommand: python main.py
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /api/status
     envVars:
       - key: PYTHON_VERSION

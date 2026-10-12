@@ -1,7 +1,10 @@
 import os
 import sqlite3
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger("x_engine")
 
 DB_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DB_DIR, "automation.db")
@@ -208,11 +211,16 @@ def get_recent_comments(limit: int = 50) -> List[Dict[str, Any]]:
     return rows
 
 def add_log(level: str, message: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO logs (level, message, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (level, message))
-    conn.commit()
-    conn.close()
+    lvl = getattr(logging, (level or "INFO").upper(), logging.INFO)
+    logger.log(lvl, "[𝕏 Engine] %s", message)
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO logs (level, message, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)", (level, message))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("[𝕏 Engine] Failed to persist log entry to SQLite: %s", e)
 
 def get_recent_logs(limit: int = 60) -> List[Dict[str, Any]]:
     conn = get_connection()

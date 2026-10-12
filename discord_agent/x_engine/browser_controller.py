@@ -1,6 +1,7 @@
 import os
 import time
 import random
+import threading
 import urllib.parse
 from typing import List, Dict, Any, Optional
 from playwright.sync_api import sync_playwright, BrowserContext, Page
@@ -17,10 +18,14 @@ class BrowserController:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.is_running = False
+        self._thread_id: Optional[int] = None
 
     def is_alive(self) -> bool:
-        """Verifies if the browser and page are still alive and responsive."""
+        """Verifies if the browser and page are still alive and responsive on the current thread."""
         if not self.is_running or not self.context or not self.page:
+            return False
+        # Playwright sync API is strictly bound to the thread that initialized it (greenlet constraint)
+        if self._thread_id != threading.get_ident():
             return False
         try:
             return not self.page.is_closed()
@@ -28,7 +33,7 @@ class BrowserController:
             return False
 
     def ensure_active(self, headless: Optional[bool] = None) -> bool:
-        """Ensures a live browser session is ready, auto-recovering if closed."""
+        """Ensures a live browser session is ready, auto-recovering if closed or on a new thread."""
         if not self.is_alive():
             self.stop()
             return self.start(headless=headless)
@@ -49,6 +54,7 @@ class BrowserController:
         os.makedirs(data_dir, exist_ok=True)
 
         try:
+            self._thread_id = threading.get_ident()
             self._playwright = sync_playwright().start()
 
             # Anti-detection & cloud container ultra-low-memory flags (tuned for 512MB RAM constraint)
@@ -256,22 +262,23 @@ class BrowserController:
 
     def stop(self):
         """Closes browser and cleans up resources cleanly."""
-        try:
-            if self.context:
-                self.context.close()
-        except Exception:
-            pass
-
-        try:
-            if self._playwright:
-                self._playwright.stop()
-        except Exception:
-            pass
-
+        current_tid = threading.get_ident()
+        if self._thread_id == current_tid:
+            try:
+                if self.context:
+                    self.context.close()
+            except Exception:
+                pass
+            try:
+                if self._playwright:
+                    self._playwright.stop()
+            except Exception:
+                pass
         self.context = None
         self.page = None
         self._playwright = None
         self.is_running = False
+        self._thread_id = None
 
     def is_logged_in(self) -> bool:
         """Checks if the current session is logged into X."""
@@ -323,7 +330,13 @@ class BrowserController:
                 curr_url = getattr(self.page, "url", "unknown")
                 return {"logged_in": False, "status": "not_logged_in", "message": f"Not logged in (URL: {curr_url} | Title: {title})"}
 
-            body_text = self.page.inner_text("body").lower()
+            body_text = ""
+            try:
+                body_elem = self.page.query_selector("body")
+                if body_elem:
+                    body_text = (body_elem.inner_text() or "").lower()
+            except Exception:
+                pass
             if "your account is suspended" in body_text or "permanently in read-only mode" in body_text:
                 return {
                     "logged_in": True,
@@ -491,7 +504,7 @@ class BrowserController:
             err_str = str(e)
             add_log("ERROR", f"Search failed for '{query}': {err_str}")
             # If browser/page was closed, auto-restart and retry once
-            if retry and ("closed" in err_str.lower() or "crashed" in err_str.lower()):
+            if retry and ("closed" in err_str.lower() or "crashed" in err_str.lower() or "different thread" in err_str.lower() or "greenlet" in err_str.lower()):
                 add_log("WARN", "Browser was closed. Auto-recovering session...")
                 self.stop()
                 if self.start():

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import math
 from datetime import datetime, timedelta, timezone
@@ -44,22 +45,103 @@ else:
     logger.info("Turso active: Connecting to %s", TURSO_URL.split("@")[-1] if "@" in TURSO_URL else TURSO_URL)
 
 _sync_client = None
+_client_lock = threading.Lock()
+_resilient_wrapper = None
 
 
-def get_client():
-    """Return a synchronous libsql_client connection."""
+def reset_client():
+    """Reset the cached Turso client to force a fresh connection."""
+    global _sync_client
+    with _client_lock:
+        if _sync_client is not None:
+            try:
+                _sync_client.close()
+            except Exception:
+                pass
+            _sync_client = None
+
+
+def _get_raw_client():
+    """Return the raw synchronous libsql_client connection."""
     global _sync_client, TURSO_URL, TURSO_TOKEN
-    if _sync_client is None:
-        if not TURSO_URL or TURSO_URL.startswith("file:"):
-            c_url, c_token = _get_turso_config()
-            if c_url:
-                TURSO_URL = c_url
-                TURSO_TOKEN = c_token
-        if TURSO_TOKEN and not TURSO_URL.startswith("file:"):
-            _sync_client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
-        else:
-            _sync_client = libsql_client.create_client_sync(url=TURSO_URL)
-    return _sync_client
+    with _client_lock:
+        if _sync_client is None:
+            if not TURSO_URL or TURSO_URL.startswith("file:"):
+                c_url, c_token = _get_turso_config()
+                if c_url:
+                    TURSO_URL = c_url
+                    TURSO_TOKEN = c_token
+            if TURSO_TOKEN and not TURSO_URL.startswith("file:"):
+                _sync_client = libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
+            else:
+                _sync_client = libsql_client.create_client_sync(url=TURSO_URL)
+        return _sync_client
+
+
+def execute_query(sql: Any, params: Any = None, retries: int = 2):
+    """Execute a single statement with transparent retry on stale socket disconnects."""
+    for attempt in range(1, retries + 1):
+        raw = _get_raw_client()
+        try:
+            if params is not None:
+                return raw.execute(sql, params)
+            return raw.execute(sql)
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_conn_error = any(w in err_str for w in [
+                "disconnect", "closed", "reset", "connection", "remote", "eof", "broken pipe"
+            ])
+            if is_conn_error and attempt < retries:
+                logger.debug("Turso execute caught stale socket (%s), reconnecting (attempt %d/%d)...", exc, attempt, retries)
+                reset_client()
+                time.sleep(0.1)
+                continue
+            raise
+
+
+def execute_batch(statements: list, retries: int = 2):
+    """Execute a batch of statements with transparent retry on stale socket disconnects."""
+    for attempt in range(1, retries + 1):
+        raw = _get_raw_client()
+        try:
+            return raw.batch(statements)
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_conn_error = any(w in err_str for w in [
+                "disconnect", "closed", "reset", "connection", "remote", "eof", "broken pipe"
+            ])
+            if is_conn_error and attempt < retries:
+                logger.debug("Turso batch caught stale socket (%s), reconnecting (attempt %d/%d)...", exc, attempt, retries)
+                reset_client()
+                time.sleep(0.1)
+                continue
+            raise
+
+
+class ResilientTursoClient:
+    """Synchronous Turso client wrapper that transparently reconnects on idle socket drops."""
+
+    def execute(self, stmt: Any, args: Any = None):
+        return execute_query(stmt, args)
+
+    def batch(self, stmts: List[Any]):
+        return execute_batch(stmts)
+
+    def close(self):
+        reset_client()
+
+    def __getattr__(self, name: str):
+        return getattr(_get_raw_client(), name)
+
+
+def get_client(force_new: bool = False):
+    """Return a resilient Turso connection wrapper."""
+    global _resilient_wrapper
+    if force_new:
+        reset_client()
+    if _resilient_wrapper is None:
+        _resilient_wrapper = ResilientTursoClient()
+    return _resilient_wrapper
 
 
 def init_schema():
@@ -234,12 +316,12 @@ def init_schema():
     ]
 
     try:
-        client.batch(statements)
+        execute_batch(statements)
     except Exception as e:
         logger.debug("Schema batch fallback: %s", e)
         for stmt in statements:
             try:
-                client.execute(stmt)
+                execute_query(stmt)
             except Exception:
                 pass
 
@@ -361,14 +443,14 @@ def bulk_upsert_users(users_data: List[Dict[str, Any]]) -> int:
     for i in range(0, len(stmts), chunk_size):
         chunk = stmts[i:i + chunk_size]
         try:
-            client.batch(chunk)
+            execute_batch(chunk)
             inserted += len(chunk)
         except Exception as exc:
-            logger.error("Error executing Turso batch of %d users: %s", len(chunk), exc)
+            logger.warning("Turso batch execution fallback for %d items (%s). Inserting sequentially...", len(chunk), exc)
             # Fallback one-by-one for this chunk
             for s, args in chunk:
                 try:
-                    client.execute(s, args)
+                    execute_query(s, args)
                     inserted += 1
                 except Exception:
                     pass

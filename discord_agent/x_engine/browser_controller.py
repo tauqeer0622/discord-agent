@@ -71,6 +71,14 @@ class BrowserController:
                 "--disable-sync",
                 "--mute-audio",
                 "--no-first-run",
+                "--js-flags=--max-old-space-size=96",  # Strictly cap V8 JavaScript heap to 96MB (prevents 1.4GB default expansion)
+                "--renderer-process-limit=1",          # Enforce single renderer process to eliminate worker process branching
+                "--disable-site-isolation-trials",     # Prevent per-site multi-process isolation
+                "--disk-cache-size=16777216",          # Limit disk cache to 16MB
+                "--media-cache-size=16777216",         # Limit media cache to 16MB
+                "--aggressive-cache-discard",          # Promptly discard background tab resources
+                "--disable-application-cache",
+                "--disable-features=Translate,OptimizationHints,MediaRouter,AudioServiceOutOfProcess",
             ]
 
             launch_kwargs = {
@@ -262,18 +270,16 @@ class BrowserController:
 
     def stop(self):
         """Closes browser and cleans up resources cleanly."""
-        current_tid = threading.get_ident()
-        if self._thread_id == current_tid:
-            try:
-                if self.context:
-                    self.context.close()
-            except Exception:
-                pass
-            try:
-                if self._playwright:
-                    self._playwright.stop()
-            except Exception:
-                pass
+        try:
+            if self.context:
+                self.context.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                self._playwright.stop()
+        except Exception:
+            pass
         self.context = None
         self.page = None
         self._playwright = None
@@ -354,6 +360,12 @@ class BrowserController:
         except Exception as e:
             add_log("WARN", f"Session check encountered: {str(e)}")
             return {"logged_in": False, "status": "error", "message": str(e)}
+        finally:
+            try:
+                if self.page and not self.page.is_closed():
+                    self.page.goto("about:blank", timeout=5000)
+            except Exception:
+                pass
 
     def search_tweets(self, query: str, max_results: int = 10, retry: bool = True) -> List[Dict[str, Any]]:
         """
@@ -510,6 +522,12 @@ class BrowserController:
                 if self.start():
                     return self.search_tweets(query, max_results=max_results, retry=False)
             return []
+        finally:
+            try:
+                if self.page and not self.page.is_closed():
+                    self.page.goto("about:blank", timeout=5000)
+            except Exception:
+                pass
 
     def _move_mouse_naturally(self, target_element):
         """Simulate realistic human-like mouse movement towards an element before clicking."""
@@ -793,5 +811,11 @@ class BrowserController:
                 if self.start():
                     return self.post_reply(tweet_id, tweet_url, reply_text, image_path=image_path, dry_run=dry_run, retry=False)
             return {"success": False, "mode": "live", "message": f"Failed to post reply: {err_msg}"}
+        finally:
+            try:
+                if self.page and not self.page.is_closed():
+                    self.page.goto("about:blank", timeout=5000)
+            except Exception:
+                pass
 
 browser_controller = BrowserController()

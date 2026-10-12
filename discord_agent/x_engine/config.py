@@ -36,7 +36,7 @@ class AppConfig(BaseModel):
 
     # Anti-Ban / Human Pacing & Rate Limits
     dry_run: bool = Field(default_factory=lambda: os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"))
-    auto_start: bool = Field(default_factory=lambda: os.getenv("AUTO_START", "true").lower() in ("true", "1", "yes"))
+    auto_start: bool = Field(default_factory=lambda: os.getenv("AUTO_START", "false").lower() in ("true", "1", "yes"))
     min_delay_seconds: int = Field(default_factory=lambda: int(os.getenv("MIN_DELAY_SECONDS", "240")))
     max_delay_seconds: int = Field(default_factory=lambda: int(os.getenv("MAX_DELAY_SECONDS", "480")))
     daily_comment_limit: int = Field(default_factory=lambda: int(os.getenv("DAILY_COMMENT_LIMIT", "12")))

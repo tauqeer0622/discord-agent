@@ -2847,24 +2847,57 @@ class CommandCenterClient(discord.Client):
             self.discord_last_error = "Discord gateway disconnected before ready."
         logger.warning("Discord gateway disconnected.")
 
+    async def _periodic_memory_cleanup_loop(self):
+        """Periodically purges accumulated cache and runs malloc_trim to keep resident RAM low."""
+        import gc
+        import ctypes
+        libc = None
+        if os.name != "nt":
+            try:
+                libc = ctypes.CDLL("libc.so.6")
+            except Exception:
+                pass
+
+        while True:
+            try:
+                await asyncio.sleep(60)
+                # 1. Clear unreferenced users in discord connection state
+                if hasattr(self, "_connection") and hasattr(self._connection, "_users"):
+                    self._connection._users.clear()
+                # 2. Python garbage collection
+                gc.collect()
+                # 3. Force Linux glibc heap trim back to OS
+                if libc and hasattr(libc, "malloc_trim"):
+                    libc.malloc_trim(0)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Memory cleanup loop notice: %s", e)
+
     async def on_ready(self):
         self.discord_ready_at = _utc_now_iso()
         self.discord_last_error = None
         logger.info(f"Logged in as {self.user.name}#{self.user.discriminator} (ID: {self.user.id})")
         logger.info("Command Center Prototype is active and monitoring...")
 
+        if not getattr(self, "memory_cleanup_started", False):
+            asyncio.create_task(self._periodic_memory_cleanup_loop())
+            self.memory_cleanup_started = True
 
         if not self.thread_cleanup_started:
             asyncio.create_task(thread_cleanup_loop(self))
             self.thread_cleanup_started = True
 
-        # Subscribe to ALL guilds for real-time events + to enable chunk/fetch_members
+        # Subscribe ONLY to the private Control Server (to monitor control threads & UI interactions)
+        # Avoid subscribing to typing & presence across all 60+ guilds to keep container RAM well under 512MB
+        control_sid = str(os.getenv("CONTROL_SERVER_ID", "")).strip()
         for guild in self.guilds:
-            try:
-                await guild.subscribe()
-                logger.info(f"Subscribed to guild '{guild.name}'")
-            except Exception as e:
-                logger.debug(f"Could not subscribe to guild '{guild.name}': {e}")
+            if str(guild.id) == control_sid:
+                try:
+                    await guild.subscribe()
+                    logger.info(f"Subscribed to control guild '{guild.name}' (ID: {guild.id})")
+                except Exception as e:
+                    logger.debug(f"Could not subscribe to control guild '{guild.name}': {e}")
 
         # Pre-warm the server member counts cache so the first dashboard visit has valid data.
         # Without this, the cold-start race (page loads before on_ready fires) returns 0/0 coverage.

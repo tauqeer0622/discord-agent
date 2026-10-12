@@ -270,12 +270,16 @@ class AutomationEngine:
                                     if not self._sleep_with_cancel(cooldown):
                                         break
 
-                        # Pause between keywords
-                        if not self._sleep_with_cancel(random.randint(10, 20)):
+                        # Pause between keywords + garbage collection
+                        import gc
+                        gc.collect()
+                        if not self._sleep_with_cancel(random.randint(15, 25)):
                             break
 
                     # Cycle pause
                     self.current_activity = "Cycle completed. Waiting for next scan..."
+                    import gc
+                    gc.collect()
                     if not self._sleep_with_cancel(60):
                         break
 

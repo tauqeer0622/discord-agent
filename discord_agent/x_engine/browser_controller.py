@@ -46,7 +46,7 @@ class BrowserController:
 
         self.stop()  # Clean any stale resources
 
-        use_headless = config.headless if headless is None else headless
+        use_headless = True if os.name != "nt" else (config.headless if headless is None else headless)
         data_dir = config.browser_data_dir
         if not os.path.isabs(data_dir):
             data_dir = os.path.join(os.path.dirname(__file__), data_dir)

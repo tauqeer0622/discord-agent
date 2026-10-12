@@ -44,7 +44,7 @@ class AppConfig(BaseModel):
     session_cooldown_seconds: int = Field(default_factory=lambda: int(os.getenv("SESSION_COOLDOWN_SECONDS", "1200")))
 
     # Browser
-    headless: bool = Field(default_factory=lambda: os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes"))
+    headless: bool = Field(default_factory=lambda: True if os.name != "nt" else (os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")))
     browser_data_dir: str = Field(default_factory=lambda: os.getenv("BROWSER_DATA_DIR", "./browser_data"))
 
     # Direct Auth Token (optional - bypass manual login)

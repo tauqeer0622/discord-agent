@@ -65,3 +65,27 @@ To resume scraping at any time:
 5. Click **Save Changes**. Render will automatically restart with scraping active.
 
 *(To pause again later, change the value back to `false` or delete the variable).*
+
+---
+
+## 6. Container OOM Elimination & Memory Architecture
+
+### Root Cause Analysis (Why the 4-Minute OOM Happened)
+1. **Hidden Gateway Event Flood (`guild_subscriptions=True`)**:
+   `discord.py-self` defaults `guild_subscriptions=True` when initializing `discord.Client`. When the userbot connected to Discord Gateway, `parse_guild_create` automatically triggered `bulk_guild_subscribe` across **all 67 servers**. Thousands of active users streaming real-time typing events, activities, and presence updates filled `_presences`, `_guild_presences`, and Python object caches within ~240 seconds (4 minutes), pushing memory beyond Render's 512MB cgroup limit.
+2. **Missing Presence & Asset Eviction**:
+   `store_presence`, `store_emoji`, and `store_sticker` persistently cached tens of thousands of objects for non-monitored guilds.
+3. **Headless Environment Override**:
+   If `HEADLESS=false` was picked up from local configs in a headless Linux container, Chromium attempted display allocation rather than purely headless execution.
+4. **Duplicate Dashboard Polling**:
+   `dashboard.html` triggered `/api/emails?limit=500` twice every 5 seconds.
+
+### Deployed Permanent Safeguards
+* **`guild_subscriptions=False`**: Prevents auto-subscribing to typing, presences, and activities across 67 guilds on boot. Only the designated Control Server is subscribed in `on_ready`.
+* **Zero-Memory Presence/Emoji Stubbing**: Presences, custom guild emojis, and stickers from unmonitored servers are immediately discarded rather than cached.
+* **30-Second Heap Janitor & `malloc_trim`**: Periodically clears internal user and presence caches, runs `gc.collect()`, and forces Linux glibc to release unmapped heap memory back to the OS via `libc.malloc_trim(0)`.
+* **Real-Time Memory Telemetry in Logs**:
+  Render logs now output exact container memory every 30 seconds:
+  `📊 Memory Telemetry [#1]: Container RSS = 85.2 MB / 512.0 MB (Headroom: 426.8 MB) | Active tasks: 8`
+* **Unconditional Headless on Linux**: Both `Dockerfile` (`ENV HEADLESS=true`) and Python controllers force `headless=True` on non-Windows environments.
+* **Optimized Frontend Polling**: Email queries only run when the email tab is actively open.

@@ -458,10 +458,18 @@ class GatewayRateLimiter:
 class CommandCenterClient(discord.Client):
     def __init__(self):
         super().__init__(
+            guild_subscriptions=False,
             chunk_guilds_at_startup=False,
             max_messages=20,
             member_cache_flags=discord.MemberCacheFlags.none()
         )
+
+        # Zero-overhead presence & asset memory guards:
+        # Ignore guild/user presences and assets across 67 servers to keep RAM under 120MB
+        if hasattr(self, "_connection"):
+            self._connection.store_presence = lambda user_id, presence, guild_id=None: presence
+            self._connection.store_emoji = lambda guild, data: None
+            self._connection.store_sticker = lambda guild, data: None
 
         self.web_server_started = False
         self.web_runner = None
@@ -2864,7 +2872,7 @@ class CommandCenterClient(discord.Client):
         logger.warning("Discord gateway disconnected.")
 
     async def _periodic_memory_cleanup_loop(self):
-        """Periodically purges accumulated cache and runs malloc_trim to keep resident RAM low."""
+        """Periodically purges accumulated cache, logs container RSS telemetry, and returns glibc memory to OS."""
         import gc
         import ctypes
         libc = None
@@ -2874,17 +2882,53 @@ class CommandCenterClient(discord.Client):
             except Exception:
                 pass
 
+        def _get_rss_mb() -> float:
+            try:
+                if os.path.exists("/proc/self/status"):
+                    with open("/proc/self/status", "r") as f:
+                        for line in f:
+                            if line.startswith("VmRSS:"):
+                                return float(line.split()[1]) / 1024.0
+            except Exception:
+                pass
+            try:
+                import resource
+                return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+            except Exception:
+                return 0.0
+
+        iteration = 0
         while True:
             try:
-                await asyncio.sleep(60)
-                # 1. Clear unreferenced users in discord connection state
-                if hasattr(self, "_connection") and hasattr(self._connection, "_users"):
-                    self._connection._users.clear()
+                await asyncio.sleep(30)
+                iteration += 1
+
+                # 1. Clear unreferenced users, presences, and guild presences
+                if hasattr(self, "_connection"):
+                    if hasattr(self._connection, "_users"):
+                        self._connection._users.clear()
+                    if hasattr(self._connection, "_presences"):
+                        self._connection._presences.clear()
+                    if hasattr(self._connection, "_guild_presences"):
+                        self._connection._guild_presences.clear()
+                    if hasattr(self._connection, "_call_message_cache"):
+                        self._connection._call_message_cache.clear()
+
                 # 2. Python garbage collection
                 gc.collect()
+
                 # 3. Force Linux glibc heap trim back to OS
                 if libc and hasattr(libc, "malloc_trim"):
                     libc.malloc_trim(0)
+
+                # 4. Telemetry logging
+                rss_mb = _get_rss_mb()
+                headroom_mb = max(0.0, 512.0 - rss_mb)
+                task_count = len(asyncio.all_tasks())
+                logger.info(
+                    "📊 Memory Telemetry [#%d]: Container RSS = %.1f MB / 512.0 MB (Headroom: %.1f MB) | Active tasks: %d",
+                    iteration, rss_mb, headroom_mb, task_count
+                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -3534,9 +3578,12 @@ async def run_service():
                 "skipped": True,
             }
 
-        if x_engine and hasattr(x_engine, "config") and getattr(x_engine.config, "auto_start", False):
+        auto_x = os.getenv("AUTO_START", "false").lower() in ("true", "1", "yes")
+        if x_engine and hasattr(x_engine, "config") and auto_x:
             logger.info("x_engine AUTO_START is enabled. Starting autonomous X growth engine...")
             x_engine.engine.start()
+        else:
+            logger.info("ℹ️ x_engine is in on-demand mode (AUTO_START=false). Browser will start only when initiated via Dashboard.")
 
         try:
             await client.start(DISCORD_TOKEN)

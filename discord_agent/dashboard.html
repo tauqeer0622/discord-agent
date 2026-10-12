@@ -2881,7 +2881,6 @@ async function refresh(){
     renderConfigTab(configs);
     renderUser(cache);
     syncTelegramBadge();
-    loadExtractedEmails();
 
     dot.classList.remove('spin');
     $('syncTxt').textContent=`Updated ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;
@@ -3939,7 +3938,9 @@ window.addEventListener('load', async () => {
   setInterval(() => {
     if (authToken) {
       refresh();
-      loadExtractedEmails();
+      if (tab === 'emails') {
+        loadExtractedEmails();
+      }
       if (tab === 'xgrowth') {
         loadXStatus();
         loadXLogs();

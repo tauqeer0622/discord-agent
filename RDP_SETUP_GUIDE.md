@@ -146,7 +146,35 @@ ngrok will provide a public HTTPS URL (e.g. `https://xyz.ngrok-free.app`) that y
 | :--- | :--- |
 | `setup_rdp.bat` | One-click automated setup (venv + dependencies + browser). Run once on new server. |
 | `start_rdp.bat` | Runs the 24/7 bot & autonomous X engine with an auto-restart crash watchdog. |
+| `update_bot.bat`| 1-click update: Pulls latest code from GitHub and updates pip packages. |
 | `stop_bot.bat` | Cleanly stops all bot processes and frees port 10000. |
+
+---
+
+## 🔄 How to Make Changes in the Future
+
+### Scenario 1: You Want Code Updates / New Features / Bug Fixes
+1. **Make changes here on your laptop** (or tell the AI assistant to code the new feature/fix).
+2. **Push to GitHub**:
+   ```cmd
+   git add .
+   git commit -m "Update feature XYZ"
+   git push origin main
+   ```
+3. **On your RDP server**:
+   - Double-click `stop_bot.bat` (or close the running bot window).
+   - Double-click `update_bot.bat` (pulls new code and updates packages automatically).
+   - Double-click `start_rdp.bat` to run the updated version!
+
+### Scenario 2: Changing Settings / Keywords / AI Prompts (Live UI)
+* Open the Web Dashboard at `http://localhost:10000` (or your remote URL).
+* Go to the **X Engine** or **Settings** tab.
+* You can change **Target Keywords**, **Negative Keywords**, **CTA pitch**, **Daily limits**, or **OpenAI model** directly on the dashboard in real-time — **no code edits or restarts required**.
+
+### Scenario 3: Changing Tokens or Credentials
+* On the RDP, open `.env` in Notepad.
+* Update `DISCORD_TOKEN`, `OPENAI_API_KEY`, or `X_AUTH_TOKEN`.
+* Save the file, run `stop_bot.bat`, and restart with `start_rdp.bat`.
 
 ---
 

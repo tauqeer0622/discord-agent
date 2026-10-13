@@ -6,6 +6,12 @@ import logging
 import math
 import mimetypes
 import os
+import sys
+
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+
 import random
 import re
 import urllib.parse
@@ -84,10 +90,6 @@ async def auth_middleware(request, handler):
         "/api/testing-server/post-gate",
     }
     if request.path in public_paths or request.path.startswith("/api/x/media") or request.method == "OPTIONS":
-        return await handler(request)
-
-    # Allow Render infrastructure health-check probes
-    if "Render" in request.headers.get("User-Agent", ""):
         return await handler(request)
 
     # Check Authorization header (Bearer <token>), cookie, or query param
@@ -414,7 +416,7 @@ async def _watch_discord_startup(client, timeout_seconds=120):
         return
     if not client.discord_last_error:
         client.discord_last_error = (
-            "Discord login is still pending; Render may be rate-limited or blocked by Discord."
+            "Discord login is still pending; bot connection may be rate-limited or blocked by Discord."
         )
     logger.warning(client.discord_last_error)
 
@@ -3548,7 +3550,7 @@ async def run_service():
         client.web_server_started = True
 
         if not DISCORD_TOKEN:
-            client.discord_last_error = "Cannot start bot without DISCORD_TOKEN. Please set DISCORD_TOKEN in Render environment."
+            client.discord_last_error = "Cannot start bot without DISCORD_TOKEN. Please set DISCORD_TOKEN in .env file."
             logger.error("%s", client.discord_last_error)
             await _hold_web_server_for_diagnostics()
             return

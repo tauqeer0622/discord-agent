@@ -57,29 +57,26 @@ class BrowserController:
             self._thread_id = threading.get_ident()
             self._playwright = sync_playwright().start()
 
-            # Anti-detection & cloud container ultra-low-memory flags (tuned for 512MB RAM constraint)
+            # Anti-detection & browser stability flags
+            # Clean flags tailored for desktop RDP with full native performance
             args = [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",  # CRITICAL for Render: prevents 64MB /dev/shm freeze & crash
-                "--disable-gpu",            # Saves 100MB+ RAM in cloud headless mode
-                "--disable-software-rasterizer",
                 "--disable-extensions",
                 "--disable-background-networking",
                 "--disable-default-apps",
                 "--disable-sync",
                 "--mute-audio",
                 "--no-first-run",
-                "--js-flags=--max-old-space-size=96",  # Strictly cap V8 JavaScript heap to 96MB (prevents 1.4GB default expansion)
-                "--renderer-process-limit=1",          # Enforce single renderer process to eliminate worker process branching
-                "--disable-site-isolation-trials",     # Prevent per-site multi-process isolation
-                "--disk-cache-size=16777216",          # Limit disk cache to 16MB
-                "--media-cache-size=16777216",         # Limit media cache to 16MB
-                "--aggressive-cache-discard",          # Promptly discard background tab resources
-                "--disable-application-cache",
-                "--disable-features=Translate,OptimizationHints,MediaRouter,AudioServiceOutOfProcess",
+                "--disable-features=Translate,OptimizationHints,MediaRouter",
             ]
+            if os.name != "nt":
+                args.extend([
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                ])
 
             launch_kwargs = {
                 "user_data_dir": data_dir,
@@ -90,7 +87,7 @@ class BrowserController:
             }
 
             def _try_launch():
-                # On Windows local dev, prefer system Chrome if available; on Linux/cloud, launch Chromium directly
+                # On Windows local/RDP, prefer system Chrome if installed; fallback to bundled Chromium
                 if os.name == "nt":
                     try:
                         return self._playwright.chromium.launch_persistent_context(
@@ -106,10 +103,9 @@ class BrowserController:
             except Exception as launch_err:
                 err_msg = str(launch_err)
                 if "Executable doesn't exist" in err_msg or "playwright install" in err_msg:
-                    add_log("ERROR", "❌ Chromium browser binary is not pre-installed in this container environment. "
-                                     "Deploy using Dockerfile on Render so browser dependencies are baked in at build time.")
+                    add_log("ERROR", "❌ Chromium browser binary is not installed. Run 'playwright install chromium' to install browser binaries.")
                 elif "shared libraries" in err_msg or "libnss3" in err_msg or "libgbm" in err_msg:
-                    add_log("ERROR", f"❌ Missing Linux OS graphics libraries for Chromium ({err_msg[:120]}). Deploy with Dockerfile on Render.")
+                    add_log("ERROR", f"❌ Missing OS graphics libraries for Chromium ({err_msg[:120]}).")
                 else:
                     add_log("ERROR", f"❌ Chromium launch error: {err_msg[:180]}")
                 self.stop()
@@ -241,24 +237,26 @@ class BrowserController:
                 ])
                 add_log("INFO", "Injected X auth_token cookie into browser session.")
 
-            # Low-memory optimization: abort heavy decorative images, video streams & fonts to conserve RAM on Render
-            def _block_heavy_assets(route):
-                req = route.request
-                url = req.url
-                # Always allow critical endpoints like image upload, tweet posting, and API requests
-                if "upload" in url or "CreateTweet" in url or "graphql" in url or "api" in url:
+            # Low-memory asset blocking (optional, disabled by default for full natural rendering on RDP)
+            block_assets = os.getenv("BLOCK_HEAVY_ASSETS", "false").lower() in ("true", "1")
+            if block_assets:
+                def _block_heavy_assets(route):
+                    req = route.request
+                    url = req.url
+                    # Always allow critical endpoints like image upload, tweet posting, and API requests
+                    if "upload" in url or "CreateTweet" in url or "graphql" in url or "api" in url:
+                        route.continue_()
+                        return
+                    # Abort heavy media, image bitmaps, and fonts if memory saving is requested
+                    if req.resource_type in ("image", "media", "font", "images"):
+                        route.abort()
+                        return
                     route.continue_()
-                    return
-                # Abort heavy media, image bitmaps, and fonts to save 180MB+ RAM during tweet scans
-                if req.resource_type in ("image", "media", "font", "images"):
-                    route.abort()
-                    return
-                route.continue_()
 
-            try:
-                self.context.route("**/*", _block_heavy_assets)
-            except Exception:
-                pass
+                try:
+                    self.context.route("**/*", _block_heavy_assets)
+                except Exception:
+                    pass
 
             self.is_running = True
             add_log("INFO", f"Browser controller started with stealth anti-detect (headless={use_headless})")

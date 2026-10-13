@@ -2,8 +2,14 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables (resolves cwd, local package dir, and project root)
 load_dotenv()
+_local_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_local_env):
+    load_dotenv(_local_env)
+_parent_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+if os.path.exists(_parent_env):
+    load_dotenv(_parent_env)
 
 # Setup logging
 LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()

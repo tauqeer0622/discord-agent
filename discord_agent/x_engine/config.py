@@ -3,7 +3,17 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+# Load environment variables across x_engine, discord_agent, and repository root
 load_dotenv()
+_local_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_local_env):
+    load_dotenv(_local_env)
+_parent_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+if os.path.exists(_parent_env):
+    load_dotenv(_parent_env)
+_root_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
+if os.path.exists(_root_env):
+    load_dotenv(_root_env)
 
 class AppConfig(BaseModel):
     # Company Profile

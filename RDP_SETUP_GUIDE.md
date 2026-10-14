@@ -145,8 +145,10 @@ ngrok will provide a public HTTPS URL (e.g. `https://xyz.ngrok-free.app`) that y
 | Script | Purpose |
 | :--- | :--- |
 | `setup_rdp.bat` | One-click automated setup (venv + dependencies + browser). Run once on new server. |
-| `start_rdp.bat` | Runs the 24/7 bot & autonomous X engine with an auto-restart crash watchdog. |
+| `start_rdp.bat` | Runs the 24/7 Command Center, X engine & Reddit engine with auto-restart watchdog. |
 | `update_bot.bat`| 1-click update: Pulls latest code from GitHub and updates pip packages. |
+| `login_reddit.bat`| 1-click visual login helper to authenticate your Reddit account. |
+| `test_reddit.bat` | Tests a dry-run daily market card post to Reddit. |
 | `stop_bot.bat` | Cleanly stops all bot processes and frees port 10000. |
 
 ---

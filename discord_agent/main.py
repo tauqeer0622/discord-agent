@@ -71,6 +71,12 @@ except Exception as _x_err:
     x_engine = None
     logging.getLogger(__name__).warning("Could not load x_engine: %s", _x_err)
 
+try:
+    import reddit_engine
+except Exception as _red_err:
+    reddit_engine = None
+    logging.getLogger(__name__).warning("Could not load reddit_engine: %s", _red_err)
+
 def generate_auth_token(password: str) -> str:
     return hmac.new(password.encode("utf-8"), b"discord_command_center_auth_v1", hashlib.sha256).hexdigest()
 
@@ -557,6 +563,14 @@ class CommandCenterClient(discord.Client):
             web.post("/api/x/media/session",              self.handle_post_x_media_session),
             web.post("/api/x/media/rotate",               self.handle_post_x_media_rotate),
             web.get("/api/x/media/{filename}",            self.handle_get_x_media_file),
+            # 🔴 Reddit Growth Engine (Autonomous Image Posts)
+            web.get("/api/reddit/status",                 self.handle_get_reddit_status),
+            web.post("/api/reddit/control/start",         self.handle_post_reddit_start),
+            web.post("/api/reddit/control/stop",          self.handle_post_reddit_stop),
+            web.post("/api/reddit/post-now",              self.handle_post_reddit_now),
+            web.get("/api/reddit/posts",                  self.handle_get_reddit_posts),
+            web.get("/api/reddit/logs",                   self.handle_get_reddit_logs),
+            web.post("/api/reddit/browser/open-login",    self.handle_post_reddit_login),
             # CORS pre-flight (catch-all)
             web.options("/{path_info:.*}",                self.handle_options_generic),
             web.get("/messages", self.handle_messages_page),
@@ -1485,6 +1499,102 @@ class CommandCenterClient(discord.Client):
             return web.Response(body=data, content_type=content_type, headers=CORS_HEADERS)
         except Exception as e:
             return web.Response(status=500, text=str(e))
+
+    # ── Reddit Growth Engine Handlers ────────────────────────────
+
+    async def handle_get_reddit_status(self, request):
+        if not reddit_engine:
+            return web.json_response({"available": False, "error": "reddit_engine module is not available"}, headers=CORS_HEADERS)
+        try:
+            stats = await asyncio.to_thread(reddit_engine.get_stats)
+            engine_status = await asyncio.to_thread(reddit_engine.engine.get_status)
+            cfg = reddit_engine.config
+            return web.json_response({
+                "available": True,
+                "engine": engine_status,
+                "stats": stats,
+                "config": {
+                    "target_subreddits": cfg.target_subreddits,
+                    "title_prefix": cfg.title_prefix,
+                    "first_comment_cta": cfg.first_comment_cta,
+                    "discord_invite_url": cfg.discord_invite_url,
+                    "delay_between_subs": cfg.post_delay_between_subs,
+                    "daily_post_limit": cfg.daily_post_limit,
+                    "dry_run": cfg.dry_run,
+                    "headless": cfg.headless,
+                }
+            }, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_post_reddit_start(self, request):
+        if not reddit_engine:
+            return web.json_response({"error": "reddit_engine not loaded"}, status=503, headers=CORS_HEADERS)
+        try:
+            if reddit_engine.engine.state == "running":
+                return web.json_response({"status": "already_running"}, headers=CORS_HEADERS)
+            await asyncio.to_thread(reddit_engine.engine.start)
+            return web.json_response({"status": "started"}, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_post_reddit_stop(self, request):
+        if not reddit_engine:
+            return web.json_response({"error": "reddit_engine not loaded"}, status=503, headers=CORS_HEADERS)
+        try:
+            await asyncio.to_thread(reddit_engine.engine.stop)
+            return web.json_response({"status": "stopped"}, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_post_reddit_now(self, request):
+        if not reddit_engine:
+            return web.json_response({"error": "reddit_engine not loaded"}, status=503, headers=CORS_HEADERS)
+        try:
+            body = await request.json() if request.can_read_body else {}
+            sub = body.get("subreddit", "test")
+            dry_run = body.get("dry_run", None)
+            res = await asyncio.to_thread(reddit_engine.engine.post_single_subreddit, sub, dry_run)
+            return web.json_response(res, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_get_reddit_posts(self, request):
+        if not reddit_engine:
+            return web.json_response({"posts": []}, headers=CORS_HEADERS)
+        try:
+            limit = int(request.query.get("limit", "50"))
+            posts = await asyncio.to_thread(reddit_engine.get_recent_posts, limit)
+            return web.json_response({"posts": posts}, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_get_reddit_logs(self, request):
+        if not reddit_engine:
+            return web.json_response({"logs": []}, headers=CORS_HEADERS)
+        try:
+            limit = int(request.query.get("limit", "100"))
+            logs = await asyncio.to_thread(reddit_engine.get_recent_logs, limit)
+            return web.json_response({"logs": logs}, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
+
+    async def handle_post_reddit_login(self, request):
+        if not reddit_engine:
+            return web.json_response({"error": "reddit_engine not loaded"}, status=503, headers=CORS_HEADERS)
+        try:
+            if reddit_engine.engine.state == "running":
+                await asyncio.to_thread(reddit_engine.engine.stop)
+            login_script = os.path.join(os.path.dirname(__file__), "reddit_engine", "login.py")
+            if os.name == "nt":
+                import subprocess
+                subprocess.Popen(["python", login_script], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                import subprocess
+                subprocess.Popen(["python3", login_script])
+            return web.json_response({"status": "login_window_launched"}, headers=CORS_HEADERS)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500, headers=CORS_HEADERS)
 
     def _public_bulk_target(self, target):
         return {
@@ -3587,6 +3697,13 @@ async def run_service():
         else:
             logger.info("ℹ️ x_engine is in on-demand mode (AUTO_START=false). Browser will start only when initiated via Dashboard.")
 
+        auto_reddit = os.getenv("REDDIT_AUTO_START", "false").lower() in ("true", "1", "yes")
+        if reddit_engine and hasattr(reddit_engine, "engine") and auto_reddit:
+            logger.info("reddit_engine REDDIT_AUTO_START is enabled. Starting autonomous Reddit engine...")
+            reddit_engine.engine.start()
+        else:
+            logger.info("ℹ️ reddit_engine is in on-demand mode (REDDIT_AUTO_START=false).")
+
         try:
             await client.start(DISCORD_TOKEN)
         except discord.errors.LoginFailure as e:
@@ -3601,6 +3718,11 @@ async def run_service():
         if x_engine and hasattr(x_engine, "engine") and getattr(x_engine.engine, "state", "") == "running":
             try:
                 x_engine.engine.stop()
+            except Exception:
+                pass
+        if reddit_engine and hasattr(reddit_engine, "engine") and getattr(reddit_engine.engine, "state", "") == "running":
+            try:
+                reddit_engine.engine.stop()
             except Exception:
                 pass
         if not client.is_closed():
